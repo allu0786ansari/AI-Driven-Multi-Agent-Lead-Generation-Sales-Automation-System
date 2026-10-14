@@ -20,6 +20,7 @@ from app.db.enums import EventStatus
 from app.db.models import InboundEvent
 from app.db.session import session_scope
 from app.logging_config import trace_id_var
+from app.messaging.outbox import deliver_pending
 from app.router.dispatcher import dispatch
 
 log = logging.getLogger(__name__)
@@ -71,7 +72,8 @@ def _process_one(event_id: str) -> str:
             with s.begin_nested():
                 result = dispatch(s, event)
             event.status = result.status
-            event.error = result.note if result.status == EventStatus.IGNORED else None
+            event.result_note = result.note
+            event.error = None
             event.processed_at = utcnow()
             log.info("event handled", extra={"event_type": event.event_type, "status": event.status})
         except Exception as exc:  # noqa: BLE001 - any handler failure is retried
@@ -101,8 +103,15 @@ def process_pending(limit: int = 50) -> dict[str, int]:
     return counts
 
 
+def run_once() -> dict[str, int]:
+    """One worker cycle: handle due events, then send the messages they queued."""
+    counts = process_pending()
+    sent = deliver_pending()
+    return {**{f"event_{k}": v for k, v in counts.items()}, **{f"message_{k}": v for k, v in sent.items()}}
+
+
 class Worker:
-    """Runs `process_pending` in a loop inside the FastAPI process.
+    """Runs `run_once` (events, then outbox) in a loop inside the FastAPI process.
 
     `wake()` is called by the webhook endpoint so new events are handled within
     milliseconds instead of waiting for the next poll.
@@ -133,7 +142,7 @@ class Worker:
             self._wake.clear()
             try:
                 while True:
-                    counts = await asyncio.to_thread(process_pending)
+                    counts = await asyncio.to_thread(run_once)
                     if not counts:
                         break
             except Exception:  # noqa: BLE001 - keep the worker alive

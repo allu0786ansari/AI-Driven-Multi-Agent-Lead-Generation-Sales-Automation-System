@@ -1,11 +1,25 @@
 PROJECT PROPOSAL
 AI-Driven Multi-Agent Lead Generation & Sales Automation System
 ==================================================================
-Revision 2 - 14 October 2026
+Revision 3 - 14 October 2026 (updated during the Week 2 build)
 (Companion document: technical_implementation_spec.txt)
 
 
-REVISION NOTES (what changed from Revision 1)
+REVISION 3 NOTES (see docs/DECISIONS.md for the reasons)
+---------------------------------------------------------
+- Product vectors are kept in the main database instead of a separate
+  vector store (ChromaDB): one less component to install on Windows, and
+  ample speed for a catalog of hundreds of products (D-007).
+- Search works out of the box with a built-in "hashing" embedder; the
+  multilingual Ollama model is chosen with an evaluation script. First
+  results: English/Hinglish/Tanglish work well already; Hindi and Tamil
+  script need the multilingual model (D-008).
+- Replies that cannot be generated or verified fall back to a
+  catalog-only reply, so customers always get an answer within the minute
+  (D-011).
+
+
+REVISION 2 NOTES (what changed from Revision 1)
 ----------------------------------------------
 - Messaging costs rewritten for Meta's current WhatsApp pricing. Since
   1 October 2026, ordinary replies inside the 24-hour customer service
@@ -202,8 +216,8 @@ Feedback Loop to Meta (stretch)
    write in Indian languages, Hinglish or transliterated text, use a
    multilingual model (e.g. bge-m3) rather than an English-centred one
    (e.g. nomic-embed-text); choose using the evaluation set (Section 9).
-3. Embeddings stored in a local vector store (ChromaDB, or pgvector inside
-   the same Postgres database to reduce moving parts).
+3. Embeddings stored in the main database next to the products (Rev 3);
+   pgvector inside Postgres when the catalog grows large.
 4. Retrieval is hybrid: structured filters (category, price range, in
    stock) plus vector similarity. For a small catalog (roughly under 100
    products) the whole catalog summary can also be placed in the prompt.
@@ -224,9 +238,11 @@ LLM (local):              Ollama; model chosen by evaluation (candidates:
                            Llama 3.x, Qwen, Gemma - test language support
                            with real customer messages). Structured JSON
                            output for all classification/extraction calls.
-Embeddings (local):        Multilingual embedding model via Ollama or
-                           sentence-transformers (e.g. bge-m3)
-Vector store:              ChromaDB, or pgvector
+Embeddings (local):        Built-in hashing embedder to start; multilingual
+                           model via Ollama (e.g. bge-m3) once chosen with
+                           the evaluation script
+Vector store:              Product vectors in the main database (Rev 3);
+                           pgvector later if needed
 Database:                  SQLite (prototype) -> Postgres
 Sheets mirror:             Google Sheets API (free tier), read-only view
 Backend / webhook server:  Python FastAPI with a background task queue
@@ -255,7 +271,7 @@ Designed so each swap is a component replacement, not a redesign:
   ------------------------------------------------------------------
   Ollama (local LLM)             ->  Hosted LLM API (Claude/GPT/etc.)
   SQLite                         ->  Managed Postgres
-  ChromaDB / pgvector            ->  pgvector or managed vector DB
+  Vectors in the main database   ->  pgvector, or a managed vector DB
                                       (Pinecone/Weaviate) if scale needs
   Google Sheets mirror           ->  Full CRM (HubSpot/Zoho/Salesforce)
   In-process background tasks    ->  Message queue + separate workers
@@ -274,7 +290,7 @@ table), this migration is mostly infrastructure swaps and configuration.
 
 7. COST CONSIDERATIONS
 ------------------------
-Software: Ollama, ChromaDB/pgvector, SQLite/Postgres, Google Sheets API and
+Software: Ollama, SQLite/Postgres, Google Sheets API and
 the Meta Graph API are free at prototype scale. Instagram/Messenger
 messaging has no per-message fee.
 

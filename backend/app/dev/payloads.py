@@ -124,15 +124,18 @@ def whatsapp_status(
     msg_id: str,
     status: str = "delivered",
     recipient: str = "919876543210",
-    pricing_category: str = "service",
+    pricing_category: str | None = None,
 ) -> dict[str, Any]:
+    """Delivery receipt. Pass `pricing_category` to include Meta's billing info (omitted by default,
+    so a simulated receipt never relabels how a message was billed)."""
     entry: dict[str, Any] = {
         "id": msg_id,
         "status": status,
         "timestamp": str(_now()),
         "recipient_id": recipient,
-        "pricing": {"billable": True, "pricing_model": "PMP", "category": pricing_category},
     }
+    if pricing_category:
+        entry["pricing"] = {"billable": True, "pricing_model": "PMP", "category": pricing_category}
     if status == "failed":
         entry["errors"] = [
             {"code": 131047, "title": "Re-engagement message", "message": "More than 24 hours have passed"}

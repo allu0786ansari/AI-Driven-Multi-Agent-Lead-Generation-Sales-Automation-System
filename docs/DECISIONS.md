@@ -130,3 +130,139 @@ Regression tests added for each case seen in the run.
 
 **Docs updated:** None (implementation detail; spec Section 11 already
 requires masking).
+
+---
+
+## D-007 - 2026-10-14 - Week 2 - Product vectors in the main database, not ChromaDB
+
+**Context:** The spec allowed ChromaDB or pgvector. ChromaDB adds a heavy
+dependency set to install on Windows and a second store to keep in sync with
+the catalog. pgvector needs Postgres, and the prototype runs on SQLite.
+
+**Decision:** `product_embeddings` table (vector as JSON, model name, text
+hash). Retrieval loads the business's vectors and scores them in Python:
+0.65 x cosine + 0.35 x keyword overlap, after price/category/stock filters.
+Only new or changed products (or a model switch) are re-embedded.
+
+**Impact:** No extra service; one backup covers everything. Scoring a few
+hundred products takes milliseconds. For thousands of products, move scoring
+to pgvector behind the same `get_product_context()` function.
+
+**Docs updated:** Spec Rev 4 Sections 1, 2, 4.7; proposal Rev 3 Sections 4, 5, 6, 7.
+
+---
+
+## D-008 - 2026-10-14 - Week 2 - Built-in "hashing" embedder by default; model chosen by measurement
+
+**Context:** The sandbox cannot download embedding models, and the user's
+customer languages are not confirmed yet.
+
+**Decision:** `EMBEDDING_PROVIDER=hashing` (word + character-trigram hashing,
+no download) is the default so search works on any machine. `scripts/eval_retrieval.py`
+measures top-1 / top-3 / MRR per language for any Ollama model on a labelled
+query file. A 28-query synthetic starter set ships in `data/eval/`.
+
+First result (hashing, sample catalog): English 100%, Hinglish 100%,
+Tanglish 100% top-3; Hindi (Devanagari) 75% and Tamil script 50% top-3.
+Native-script messages need a multilingual model (bge-m3 is the first
+candidate); switch with `EMBEDDING_PROVIDER=ollama`.
+
+**Docs updated:** Spec Rev 4 Section 1; proposal Rev 3.
+
+---
+
+## D-009 - 2026-10-14 - Week 2 - Transactional outbox for all outgoing messages
+
+**Context:** If an agent called the WhatsApp API directly and a later step in
+the same event failed, the worker's retry would send the message again.
+
+**Decision:** The Send Gate writes the message as `queued` in the same
+database transaction as the agent's other changes. After the transaction
+commits, the worker's outbox step sends it (`sending` -> `sent`). Transient
+API errors are retried with backoff (10s, 20s; 3 attempts); permanent errors
+mark it `failed`. A message stuck in `sending` (server stopped mid-call) is
+never re-sent - it is marked `failed` with "outcome unknown" after 10
+minutes for a person to check. Each message has a unique idempotency key
+(`reply:<inbound message id>`, `leadform:<leadgen id>`).
+
+**Impact:** A customer never receives the same automatic message twice, and
+a crash never silently loses one.
+
+**Docs updated:** Spec Rev 4 Sections 2, 3.3, 4.3.
+
+---
+
+## D-010 - 2026-10-14 - Week 2 - Opt-out keywords and media handoff implemented now (basic)
+
+**Context:** Spec puts opt-out verification in Week 5 and handoff alerts in
+Week 3. Without them, Week 2 would answer a "STOP" with a product list, and
+answer a voice note it cannot understand.
+
+**Decision:** Basic versions now: STOP / UNSUBSCRIBE / CANCEL / BAND / BAND
+KARO / "Stop messages" button -> `opted_out`, consent event, one
+confirmation. Voice notes, photos and other media -> holding reply and
+`is_human_takeover`. These replies use a new sender value `system`, which is
+not silenced by a takeover (a salesperson reply is `salesperson`, an AI reply
+is `agent`). Week 3 adds the salesperson alert; Week 5 adds multi-language
+opt-out words and the nurture checks.
+
+**Docs updated:** Spec Rev 4 Section 4.3 (sender values).
+
+---
+
+## D-011 - 2026-10-14 - Week 2 - Reply guardrails: placeholders, validation, catalog-only fallback
+
+**Decision:** The LLM sees prices (to compare products) but must write
+`{{price:SKU}}`, `{{stock:SKU}}`, `{{name:SKU}}`; code fills them. The final
+text is validated (money = catalog price, other numbers and percentages must
+appear in product data or the customer's message, no unsupported
+offer/discount/EMI/free-delivery claims). Any failure - LLM down, invalid or
+empty output, unknown SKU, failed validation - produces a deterministic
+catalog-only reply. If no product matches either, a holding message is sent
+and the lead is handed to a person. The Send Gate re-runs validation as a
+second check.
+
+**Impact:** Customers always get a correct answer quickly. With
+`LLM_PROVIDER=fake` (sandbox), every reply is the catalog-only version.
+
+**Docs updated:** Spec Rev 4 Section 10.
+
+---
+
+## D-012 - 2026-10-14 - Week 2 - Delivery receipts correct the cost estimate
+
+**Decision:** WhatsApp status webhooks move a message forward only (sent <
+delivered < read; `failed` always applies, with Meta's error code). When the
+receipt says the message was not billable (free entry point / free customer
+service), its estimated cost becomes 0 and the lead's total is corrected. A
+receipt for an unknown message ID is retried up to 3 times (it can arrive a
+moment before our "sent" record is saved), then ignored.
+
+**Docs updated:** Spec Rev 4 Section 4.3.
+
+---
+
+## D-013 - 2026-10-14 - Week 2 - Read-only lead API and product search now
+
+**Context:** Without them the Week 2 flows can only be checked by reading
+the database.
+
+**Decision:** `GET /api/leads`, `GET /api/leads/{id}` (with conversation)
+from spec 3.2 brought forward in read-only form; new
+`GET /api/products/search?q=` shows the scores the agents see. Week 4 adds
+the write endpoints for the dashboard.
+
+**Docs updated:** Spec Rev 4 Section 3.2.
+
+---
+
+## D-014 - 2026-10-14 - Week 2 - Cost estimates are configuration, not code
+
+**Decision:** Per-message INR rates are settings (`WA_RATE_MARKETING_INR=0.8631`,
+`WA_RATE_UTILITY_INR=0.12`, `WA_RATE_SERVICE_INR=0.12`). Service replies are
+estimated at the utility rate, as Meta bills them since 1 October 2026. The
+monthly free service-message allowance some providers report is not
+deducted, so estimates err on the high side. Verify the rates against
+Meta's current rate card before budgeting.
+
+**Docs updated:** `backend/.env.example`.

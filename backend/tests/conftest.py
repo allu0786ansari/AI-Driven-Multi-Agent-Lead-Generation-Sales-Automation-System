@@ -34,6 +34,7 @@ from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+import app.handlers  # noqa: E402,F401 - register handlers before any test snapshots the router
 from app.config import BACKEND_DIR, get_settings  # noqa: E402
 from app.db.session import init_engine, session_scope  # noqa: E402
 from app.router import dispatcher  # noqa: E402
@@ -66,6 +67,30 @@ def db_url(tmp_path: Path, template_db: Path) -> Iterator[str]:
     init_engine(url)
     yield url
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def fresh_clients() -> Iterator[None]:
+    """New fake WhatsApp/Meta/LLM/embedding clients for every test."""
+    from app.integrations.factory import reset_clients
+    from app.llm.factory import get_llm_client
+    from app.rag.retrieve import get_embedding_client
+
+    for clear in (reset_clients, get_llm_client.cache_clear, get_embedding_client.cache_clear):
+        clear()
+    yield
+    for clear in (reset_clients, get_llm_client.cache_clear, get_embedding_client.cache_clear):
+        clear()
+
+
+@pytest.fixture
+def catalog(user):  # noqa: ANN001, ANN201
+    """The sample catalog imported for the test user."""
+    from app.catalog.loader import import_catalog, load_catalog_file
+
+    with session_scope() as s:
+        import_catalog(s, user.user_id, load_catalog_file(get_settings().catalog_path))
+    return user
 
 
 @pytest.fixture(autouse=True)

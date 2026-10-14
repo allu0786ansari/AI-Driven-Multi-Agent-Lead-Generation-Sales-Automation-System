@@ -19,6 +19,9 @@ from app.config import get_settings
 from app.db.models import User
 from app.db.session import session_scope
 from app.db.tenancy import resolve_user_id
+from app.rag.embeddings import EmbeddingError
+from app.rag.index import index_products
+from app.rag.retrieve import get_embedding_client
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -51,7 +54,19 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         result = import_catalog(s, user_id, products)
-    print(f"Imported: {result.created} created, {result.updated} updated, {result.unchanged} unchanged.")
+        print(f"Imported: {result.created} created, {result.updated} updated, {result.unchanged} unchanged.")
+        client = get_embedding_client()
+        try:
+            indexed = index_products(s, user_id, client)
+        except EmbeddingError as exc:
+            print(
+                f"Products saved, but embedding failed ({exc}). Search will retry automatically.",
+                file=sys.stderr,
+            )
+            return 0
+        print(
+            f"Search index ({client.model_id}): {indexed.embedded} embedded, {indexed.unchanged} unchanged."
+        )
     return 0
 
 

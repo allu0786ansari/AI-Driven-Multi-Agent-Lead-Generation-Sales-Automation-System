@@ -36,6 +36,7 @@ class Sender(StrEnum):
     AGENT = "agent"
     LEAD = "lead"
     SALESPERSON = "salesperson"
+    SYSTEM = "system"  # automatic holding / confirmation messages (not subject to takeover)
 
 
 class PricingCategory(StrEnum):
@@ -48,10 +49,23 @@ class PricingCategory(StrEnum):
 
 class DeliveryStatus(StrEnum):
     PENDING = "pending"
+    RECEIVED = "received"  # inbound message
+    QUEUED = "queued"  # outbound, waiting in the outbox
+    SENDING = "sending"  # outbound, API call in progress
     SENT = "sent"
     DELIVERED = "delivered"
     READ = "read"
     FAILED = "failed"
+
+
+# Status webhooks can arrive out of order; never move a message backwards.
+DELIVERY_RANK = {
+    DeliveryStatus.QUEUED: 0,
+    DeliveryStatus.SENDING: 1,
+    DeliveryStatus.SENT: 2,
+    DeliveryStatus.DELIVERED: 3,
+    DeliveryStatus.READ: 4,
+}
 
 
 class ConsentType(StrEnum):

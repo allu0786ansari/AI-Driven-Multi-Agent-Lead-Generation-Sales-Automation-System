@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -42,8 +43,16 @@ def _scenarios(args: argparse.Namespace) -> dict[str, Callable[[], list[tuple[st
         return [("duplicate (1st)", payload, True), ("duplicate (2nd)", payload, True)]
 
     def status_flow() -> list[tuple[str, dict[str, Any], bool]]:
-        mid = "wamid.TEST" + "statusflow"
-        return [(f"status {s}", p.whatsapp_status(mid, s), True) for s in ("sent", "delivered", "read")]
+        """Delivery receipts for the most recent message the server sent."""
+        time.sleep(1.5)  # give the server's outbox a moment to send earlier replies
+        latest = _latest_sent_message()
+        if latest is None:
+            print("status: no sent message found yet - run another scenario first")
+            return []
+        mid, phone = latest
+        return [
+            (f"status {s}", p.whatsapp_status(mid, s, recipient=phone), True) for s in ("delivered", "read")
+        ]
 
     return {
         "whatsapp": lambda: [
@@ -52,13 +61,16 @@ def _scenarios(args: argparse.Namespace) -> dict[str, Callable[[], list[tuple[st
         "ctwa": lambda: [
             (
                 "ctwa ad message",
-                p.whatsapp_ctwa(args.phone, text or "Hello! Can I get more info on this?"),
+                p.whatsapp_ctwa("919876543211", text or "Hi! Is the 6 litre air fryer available?"),
                 True,
             )
         ],
-        "voice": lambda: [("whatsapp voice note", p.whatsapp_audio(args.phone), True)],
-        "status": status_flow,
+        "voice": lambda: [("whatsapp voice note", p.whatsapp_audio("919800000077"), True)],
+        "stop": lambda: [("opt-out (STOP)", p.whatsapp_text("919800000099", "STOP", name="Opt Out"), True)],
         "leadgen": lambda: [("lead form", p.leadgen(), True)],
+        "leadgen-no-optin": lambda: [
+            ("lead form, no opt-in", p.leadgen(leadgen_id="000" + str(int(time.time()))), True)
+        ],
         "fb-comment": lambda: [("facebook comment", p.facebook_comment(text or "Price please?"), True)],
         "ig-comment": lambda: [("instagram comment", p.instagram_comment(text or "How much is this?"), True)],
         "messenger": lambda: [
@@ -69,7 +81,26 @@ def _scenarios(args: argparse.Namespace) -> dict[str, Callable[[], list[tuple[st
         "reaction": lambda: [("facebook reaction", p.facebook_reaction(), True)],
         "duplicate": dup,
         "bad-signature": lambda: [("bad signature", p.whatsapp_text(text="forged"), False)],
+        "status": status_flow,  # last: needs a message sent by an earlier scenario
     }
+
+
+def _latest_sent_message() -> tuple[str, str] | None:
+    from sqlalchemy import select
+
+    from app.db.enums import Direction
+    from app.db.models import Lead, Message
+    from app.db.session import session_scope
+
+    with session_scope() as s:
+        row = s.execute(
+            select(Message.platform_message_id, Lead.contact_phone)
+            .join(Lead, Lead.lead_id == Message.lead_id)
+            .where(Message.direction == Direction.OUTBOUND, Message.platform_message_id.is_not(None))
+            .order_by(Message.timestamp.desc())
+            .limit(1)
+        ).first()
+    return (row[0], row[1].lstrip("+")) if row else None
 
 
 def main(argv: list[str] | None = None) -> int:

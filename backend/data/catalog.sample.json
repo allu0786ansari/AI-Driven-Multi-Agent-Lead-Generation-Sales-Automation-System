@@ -1,0 +1,93 @@
+{
+  "_note": "SAMPLE catalog for development only. Replace with the business's real products (same format).",
+  "products": [
+    {
+      "sku": "MG-750-3J",
+      "name": "PowerChef 750W Mixer Grinder",
+      "category": "Mixer Grinders",
+      "price": 3499,
+      "currency": "INR",
+      "description": "750 watt mixer grinder with 3 stainless steel jars for grinding, blending and chutneys. Overload protection and 3 speed settings.",
+      "key_attributes": {"power_watts": 750, "jars": 3, "warranty_years": 2, "colour": "White"},
+      "stock_status": "in_stock",
+      "source_url": null
+    },
+    {
+      "sku": "MG-1000-4J",
+      "name": "PowerChef Pro 1000W Mixer Grinder",
+      "category": "Mixer Grinders",
+      "price": 5299,
+      "currency": "INR",
+      "description": "1000 watt heavy-duty mixer grinder with 4 jars including a juicer jar. Suitable for large families and daily wet grinding.",
+      "key_attributes": {"power_watts": 1000, "jars": 4, "warranty_years": 2, "colour": "Black"},
+      "stock_status": "low_stock",
+      "source_url": null
+    },
+    {
+      "sku": "AF-4L-DIG",
+      "name": "CrispAir 4.2L Digital Air Fryer",
+      "category": "Air Fryers",
+      "price": 4999,
+      "currency": "INR",
+      "description": "4.2 litre air fryer with digital touch panel and 8 presets. Cooks with up to 85% less oil.",
+      "key_attributes": {"capacity_litres": 4.2, "presets": 8, "power_watts": 1400, "warranty_years": 1},
+      "stock_status": "in_stock",
+      "source_url": null
+    },
+    {
+      "sku": "AF-6L-WIN",
+      "name": "CrispAir 6L Air Fryer with Window",
+      "category": "Air Fryers",
+      "price": 6799,
+      "currency": "INR",
+      "description": "6 litre family-size air fryer with a viewing window and shake reminder. Dishwasher-safe basket.",
+      "key_attributes": {"capacity_litres": 6, "presets": 10, "power_watts": 1700, "warranty_years": 1},
+      "stock_status": "in_stock",
+      "source_url": null
+    },
+    {
+      "sku": "IC-2000-TCH",
+      "name": "FlameFree 2000W Induction Cooktop",
+      "category": "Induction Cooktops",
+      "price": 2699,
+      "currency": "INR",
+      "description": "2000 watt induction cooktop with touch controls, 7 Indian cooking presets and auto-off safety.",
+      "key_attributes": {"power_watts": 2000, "presets": 7, "warranty_years": 1, "voltage_protection": true},
+      "stock_status": "in_stock",
+      "source_url": null
+    },
+    {
+      "sku": "EK-1.8-SS",
+      "name": "QuickBoil 1.8L Steel Electric Kettle",
+      "category": "Kettles",
+      "price": 1199,
+      "currency": "INR",
+      "description": "1.8 litre stainless steel kettle with auto shut-off and boil-dry protection. Boils water in about 5 minutes.",
+      "key_attributes": {"capacity_litres": 1.8, "power_watts": 1500, "warranty_years": 1},
+      "stock_status": "in_stock",
+      "source_url": null
+    },
+    {
+      "sku": "WP-RO-UV-8L",
+      "name": "PureSip RO+UV 8L Water Purifier",
+      "category": "Water Purifiers",
+      "price": 12999,
+      "currency": "INR",
+      "description": "RO + UV + mineral water purifier with 8 litre storage tank. Free installation in serviced cities.",
+      "key_attributes": {"storage_litres": 8, "stages": 7, "warranty_years": 1, "installation": "free"},
+      "stock_status": "preorder",
+      "source_url": null
+    },
+    {
+      "sku": "HB-400-SET",
+      "name": "WhiskMate 400W Hand Blender Set",
+      "category": "Hand Blenders",
+      "price": 1899,
+      "currency": "INR",
+      "description": "400 watt hand blender with whisk and chopper attachments. Ideal for soups, shakes and batters.",
+      "key_attributes": {"power_watts": 400, "attachments": 3, "warranty_years": 1},
+      "stock_status": "out_of_stock",
+      "source_url": null
+    }
+  ]
+}

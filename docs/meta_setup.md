@@ -143,3 +143,56 @@ in each language customers write in.
 
 Model choice is final only after the Week 2 evaluation on real customer
 messages (candidates: Llama 3.x, Qwen, Gemma).
+
+## 7. Instagram and Messenger (Week 3)
+
+In `backend/.env`:
+
+| Setting | Where to find it |
+|---|---|
+| `META_PAGE_ID` | Facebook Page > About > Page transparency (Page ID), or the `entry.id` of a Page webhook in `GET /api/events` |
+| `INSTAGRAM_ACCOUNT_ID` | Instagram professional account ID, or the `entry.id` of an Instagram webhook |
+| `META_PAGE_ACCESS_TOKEN` | Page access token with the permissions in section 2 (also used for lead forms) |
+
+- With **Instagram via Facebook Login** (default) messages are sent from the
+  Page ID with the Page token. With **Instagram Login**, set
+  `INSTAGRAM_API_BASE_URL=https://graph.instagram.com` and
+  `INSTAGRAM_ACCESS_TOKEN`. Check Meta's current Instagram messaging docs for
+  your app type before going live.
+- Instagram messaging must be allowed for connected tools: Instagram app >
+  Settings > Messages > Connected tools (wording may differ).
+- **Link posts and ads to products** so "How much is this?" gets the right
+  answer: find the media / post / ad ID in a lead's "source detail" or in
+  `GET /api/events` (notes say "post X has no linked product"), then call
+  `PUT /api/settings/content-products` with `{"links": {"<id>": "<SKU>"}}`.
+
+## 8. Salesperson alerts
+
+`ALERTS_MODE=log` only writes alerts to the log and `GET /api/notifications`.
+For real alerts set `ALERTS_MODE=live` and configure one or both:
+
+**Telegram (recommended, free and instant)**
+1. In Telegram, message **@BotFather**, send `/newbot`, follow the steps,
+   copy the token into `TELEGRAM_BOT_TOKEN`.
+2. Send any message to your new bot, then open
+   `https://api.telegram.org/bot<token>/getUpdates` in a browser and copy
+   `"chat":{"id": ...}` into `TELEGRAM_CHAT_ID`.
+
+**Email (Gmail example)**
+1. Turn on 2-step verification for the Google account, then create an
+   **App password** (Google Account > Security > App passwords).
+2. `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_USERNAME=<gmail address>`,
+   `SMTP_PASSWORD=<app password>`, `ALERT_EMAIL_TO=<where alerts go>`.
+
+`ALERT_CHANNELS=telegram` (or `email`, or `email,telegram`) chooses which are used.
+
+## 9. Google Sheets mirror (optional; CSV works without this)
+
+1. In Google Cloud Console create a project, enable the **Google Sheets API**.
+2. Create a **service account**, add a **JSON key**, download it to
+   `backend/secrets/google-service-account.json` (the `secrets` folder is not
+   committed to git).
+3. Create a Google Sheet with a tab named `Leads`, click **Share**, and add the
+   service account's email (ends with `iam.gserviceaccount.com`) as **Editor**.
+4. Copy the sheet ID from its URL (`docs.google.com/spreadsheets/d/<ID>/edit`)
+   into `GOOGLE_SHEET_ID`, set `SHEETS_MODE=google`, restart the server.

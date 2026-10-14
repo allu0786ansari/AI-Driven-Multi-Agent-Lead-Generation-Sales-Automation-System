@@ -210,3 +210,161 @@ def capture_lead_form(session: Session, user_id: str, lead_data: dict[str, Any])
             )
         )
     return CaptureResult(lead, created)
+
+
+# --------------------------------------------------------------- Week 3: Instagram / Messenger
+
+_ATTACHMENT_TYPES = {"image": "image", "audio": "audio", "video": "video", "file": "document"}
+
+
+@dataclass(frozen=True)
+class CommentInfo:
+    channel: str  # instagram | messenger (Facebook Page comments are answered via Messenger)
+    comment_id: str
+    text: str
+    author_id: str
+    author_name: str | None
+    post_id: str | None
+    created_at: datetime
+    account_id: str  # our Page / Instagram account ID (to skip our own comments)
+
+
+def parse_comment(event_type: str, payload: dict[str, Any]) -> CommentInfo:
+    c = payload["comment"]
+    author = c.get("from") or {}
+    if event_type == "instagram.comment":
+        return CommentInfo(
+            channel=Channel.INSTAGRAM,
+            comment_id=str(c["id"]),
+            text=c.get("text") or "",
+            author_id=str(author.get("id", "")),
+            author_name=author.get("username"),
+            post_id=(c.get("media") or {}).get("id"),
+            # The comment itself has no timestamp; Meta's delivery time for the entry is close.
+            created_at=_entry_time(payload.get("entry_time")),
+            account_id=str(payload.get("entry_id", "")),
+        )
+    return CommentInfo(
+        channel=Channel.MESSENGER,
+        comment_id=str(c["comment_id"]),
+        text=c.get("message") or "",
+        author_id=str(author.get("id", "")),
+        author_name=author.get("name"),
+        post_id=c.get("post_id"),
+        created_at=_epoch(c.get("created_time")),
+        account_id=str(payload.get("entry_id", "")),
+    )
+
+
+def _entry_time(value: Any) -> datetime:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return utcnow()
+    return datetime.fromtimestamp(number / 1000 if number > 10**11 else number, UTC)
+
+
+def _scoped_column(channel: str):  # noqa: ANN202
+    return Lead.instagram_scoped_id if channel == Channel.INSTAGRAM else Lead.messenger_scoped_id
+
+
+def find_or_create_by_scoped_id(
+    session: Session, user_id: str, channel: str, scoped_id: str, source: str
+) -> tuple[Lead, bool]:
+    column = _scoped_column(channel)
+    lead = session.scalar(
+        select(Lead).where(Lead.user_id == user_id, column == scoped_id).order_by(Lead.created_at).limit(1)
+    )
+    if lead is not None:
+        return lead, False
+    lead = Lead(user_id=user_id, preferred_channel=channel, source=source, qualify_slots={})
+    setattr(lead, column.key, scoped_id)
+    session.add(lead)
+    session.flush()
+    return lead, True
+
+
+def capture_comment(session: Session, user_id: str, info: CommentInfo) -> CaptureResult:
+    """Create/find the commenter's lead and log the comment (media_type "comment")."""
+    if info.channel == Channel.INSTAGRAM:
+        # Instagram comment author IDs are the same IGSIDs that their DMs use.
+        lead, created = find_or_create_by_scoped_id(session, user_id, info.channel, info.author_id, "comment")
+    else:
+        lead = session.scalar(
+            select(Lead).where(Lead.user_id == user_id, Lead.facebook_user_id == info.author_id).limit(1)
+        )
+        created = lead is None
+        if lead is None:
+            lead = Lead(
+                user_id=user_id,
+                preferred_channel=Channel.MESSENGER,
+                source=LeadSource.COMMENT,
+                facebook_user_id=info.author_id,
+                qualify_slots={},
+            )
+            session.add(lead)
+            session.flush()
+    if info.author_name and not lead.name:
+        lead.name = info.author_name
+    where = "Instagram" if info.channel == Channel.INSTAGRAM else "Facebook"
+    if created or not lead.source_detail:
+        lead.source_detail = f"{where} comment on post {info.post_id or '?'}"
+    lead.last_activity_at = utcnow()
+    message = Message(
+        user_id=user_id,
+        lead_id=lead.lead_id,
+        channel=info.channel,
+        direction=Direction.INBOUND,
+        sender=Sender.LEAD,
+        text=info.text,
+        media_type="comment",  # not a DM: does not open the 24h messaging window
+        platform_message_id=info.comment_id,
+        delivery_status=DeliveryStatus.RECEIVED,
+        timestamp=info.created_at,
+        payload={"type": "comment", "post_id": info.post_id},
+    )
+    session.add(message)
+    session.flush()
+    return CaptureResult(lead, created, message, info.text, "none")
+
+
+def capture_meta_message(
+    session: Session, user_id: str, channel: str, payload: dict[str, Any]
+) -> CaptureResult:
+    """Instagram DM or Messenger message."""
+    item = payload["messaging"]
+    sender_id = str((item.get("sender") or {}).get("id", ""))
+    if not sender_id:
+        raise ValueError("message without sender id")
+    lead, created = find_or_create_by_scoped_id(session, user_id, channel, sender_id, LeadSource.DM)
+
+    msg = item.get("message") or {}
+    postback = item.get("postback") or {}
+    text = msg.get("text") or postback.get("title")
+    media_type = "none"
+    attachments = msg.get("attachments") or []
+    if attachments and not text:
+        media_type = _ATTACHMENT_TYPES.get(
+            attachments[0].get("type"), str(attachments[0].get("type") or "media")
+        )
+
+    ts = item.get("timestamp")
+    sent_at = datetime.fromtimestamp(int(ts) / 1000, UTC) if ts else utcnow()
+    lead.preferred_channel = lead.preferred_channel or channel
+    lead.last_activity_at = utcnow()
+    message = Message(
+        user_id=user_id,
+        lead_id=lead.lead_id,
+        channel=channel,
+        direction=Direction.INBOUND,
+        sender=Sender.LEAD,
+        text=text,
+        media_type=media_type,
+        platform_message_id=msg.get("mid") or postback.get("mid"),
+        delivery_status=DeliveryStatus.RECEIVED,
+        timestamp=sent_at,
+        payload={"type": "postback" if postback else "message"},
+    )
+    session.add(message)
+    session.flush()
+    return CaptureResult(lead, created, message, text, media_type)

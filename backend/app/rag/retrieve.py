@@ -51,7 +51,8 @@ def get_embedding_client() -> EmbeddingClient:
     return HashingEmbeddings()
 
 
-def _content_tokens(text: str) -> list[str]:
+def content_tokens(text: str) -> list[str]:
+    """Words that identify a product (stopwords removed)."""
     return [t for t in tokenize(text) if t not in _STOPWORDS and (len(t) >= 2 or t.isdigit())]
 
 
@@ -110,7 +111,7 @@ def rank_products(
     if not candidates:
         return []
     query_vec = client.embed([query])[0]
-    query_tokens = _content_tokens(query)
+    query_tokens = content_tokens(query)
     scored: list[RetrievedProduct] = []
     for record, vector in candidates:
         if not _passes(record, filters):

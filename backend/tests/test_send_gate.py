@@ -113,7 +113,12 @@ def test_takeover_blocks_agent_not_salesperson(user) -> None:  # noqa: ANN001
     ("fields", "kwargs", "reason"),
     [
         ({"contact_phone": None}, {}, "lead has no WhatsApp number"),
-        ({}, {"channel": Channel.INSTAGRAM}, "channel instagram not supported yet"),
+        # Week 3: Instagram is supported; without an Instagram ID there is no one to message.
+        (
+            {},
+            {"channel": Channel.INSTAGRAM},
+            "lead has no instagram ID yet (they have not messaged us there)",
+        ),
     ],
 )
 def test_other_blocks(user, fields, kwargs, reason) -> None:  # noqa: ANN001

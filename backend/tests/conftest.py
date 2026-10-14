@@ -20,6 +20,8 @@ os.environ.update(
         "LOG_JSON": "true",
         "WORKER_BACKOFF_BASE_SECONDS": "5",
         "WORKER_MAX_ATTEMPTS": "3",
+        "SHEETS_MODE": "off",
+        "ALERTS_MODE": "log",
     }
 )
 

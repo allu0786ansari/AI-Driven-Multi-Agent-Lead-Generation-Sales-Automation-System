@@ -57,6 +57,11 @@ class FakeLLMClient:
     def health(self) -> bool:
         return True
 
+    @property
+    def is_scripted(self) -> bool:
+        """False when nothing was scripted - i.e. there is no real model behind this client."""
+        return bool(self._queue) or self.responder is not None
+
 
 def _minimal_instance(schema: dict[str, Any], root: dict[str, Any]) -> Any:
     if "$ref" in schema:

@@ -72,7 +72,9 @@ def _scenarios(args: argparse.Namespace) -> dict[str, Callable[[], list[tuple[st
             ("lead form, no opt-in", p.leadgen(leadgen_id="000" + str(int(time.time()))), True)
         ],
         "fb-comment": lambda: [("facebook comment", p.facebook_comment(text or "Price please?"), True)],
-        "ig-comment": lambda: [("instagram comment", p.instagram_comment(text or "How much is this?"), True)],
+        "ig-comment": lambda: [
+            ("instagram comment", p.instagram_comment(text or "How much is this?", media_id=args.media), True)
+        ],
         "messenger": lambda: [
             ("messenger message", p.messenger_message(text or "Do you deliver to Chennai?"), True)
         ],
@@ -81,8 +83,58 @@ def _scenarios(args: argparse.Namespace) -> dict[str, Callable[[], list[tuple[st
         "reaction": lambda: [("facebook reaction", p.facebook_reaction(), True)],
         "duplicate": dup,
         "bad-signature": lambda: [("bad signature", p.whatsapp_text(text="forged"), False)],
+        # ---- Week 3 ----
+        "ig-spam": lambda: [
+            (
+                "instagram spam comment",
+                p.instagram_comment("Follow me for free followers www.example.com"),
+                True,
+            )
+        ],
+        "fb-complaint": lambda: [
+            ("facebook complaint", p.facebook_comment("Worst service, my order never arrived. Refund!"), True)
+        ],
+        "ig-hot": lambda: _ig_hot_conversation(),
+        "wa-hot": lambda: [
+            (
+                f"hot whatsapp {i + 1}",
+                p.whatsapp_text(args.lead_phone or "919811100000", t, name="Hot Lead"),
+                True,
+            )
+            for i, t in enumerate(
+                [
+                    "Hi, I want the 6 litre air fryer",
+                    "Need 2 pcs, budget 15000, delivery to Chennai this week. Want to order",
+                ]
+            )
+        ],
+        "human": lambda: [
+            (
+                "asks for a person",
+                p.whatsapp_text(args.lead_phone or "919811100001", "Can someone call me please?"),
+                True,
+            )
+        ],
         "status": status_flow,  # last: needs a message sent by an earlier scenario
     }
+
+
+def _ig_hot_conversation() -> list[tuple[str, dict[str, Any], bool]]:
+    """Comment -> (private reply) -> the same person continues in Instagram DMs and becomes hot."""
+    igsid = "700000000000777"
+    return [
+        (
+            "hot: ig comment",
+            p.instagram_comment("price of air fryer?", from_id=igsid, username="priya_k"),
+            True,
+        ),
+        ("hot: ig dm 1", p.instagram_message("I want the 6L one, 2 pcs", igsid=igsid), True),
+        (
+            "hot: ig dm 2",
+            p.instagram_message("budget 15000, Chennai, need it today. order karna hai", igsid=igsid),
+            True,
+        ),
+    ]
 
 
 def _latest_sent_message() -> tuple[str, str] | None:
@@ -111,6 +163,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--url", default="http://127.0.0.1:8000")
     parser.add_argument("--text", default=None, help="Message/comment text")
     parser.add_argument("--phone", default="919876543210", help="Sender WhatsApp number (digits only)")
+    parser.add_argument(
+        "--media", default=None, help="Instagram media ID for ig-comment (to test product links)"
+    )
+    parser.add_argument(
+        "--lead-phone", default=None, help="Customer number for wa-hot / human (use a new one to repeat)"
+    )
     parser.add_argument("--list", action="store_true", help="List scenarios")
     args = parser.parse_args(argv)
 

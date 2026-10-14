@@ -266,3 +266,124 @@ deducted, so estimates err on the high side. Verify the rates against
 Meta's current rate card before budgeting.
 
 **Docs updated:** `backend/.env.example`.
+
+---
+
+## D-015 - 2026-10-14 - Week 3 - How Instagram and Messenger messages are sent and linked
+
+**Decision:**
+- Private replies, DMs, public comment replies and hiding comments go through
+  the Page's Graph API endpoints with the Page token by default (Instagram via
+  Facebook Login). `INSTAGRAM_API_BASE_URL=https://graph.instagram.com` switches
+  Instagram to the Instagram-Login API (own token and account ID).
+- Facebook comments are answered privately through Messenger. A Facebook
+  commenter's ID is not their Messenger ID, so the lead stores it in a new
+  column `leads.facebook_user_id`; the private reply's response returns the
+  Messenger ID (`recipient_id`), which is saved so their later DMs join the
+  same lead. Instagram commenter IDs are already the DM IDs.
+- No per-message fee on these channels (`pricing_category = free`). DMs are
+  allowed within 24h of the lead's last DM on that channel; a comment does not
+  open that window. One private reply per comment within 7 days, enforced by the
+  idempotency key `private_reply:<comment id>` and the Send Gate.
+
+**Docs updated:** Spec Rev 5 Sections 2, 3.3, 4.1, 9.
+
+---
+
+## D-016 - 2026-10-14 - Week 3 - Comment intent: LLM plus keyword rules
+
+**Decision:** The LLM classifies comments (purchase interest, product question,
+complaint, spam, other). Keyword rules (English/Hinglish/Tanglish, incl. "pp",
+"evlo", "kitna") are used when no model is configured or the model fails, and
+override the model when they clearly see spam links or a complaint. Spam is
+hidden best-effort (a failure to hide is logged, not retried). "Other"
+(compliments, emojis, tags) creates no lead.
+
+**Docs updated:** Spec Rev 5 Section 10.
+
+---
+
+## D-017 - 2026-10-14 - Week 3 - Qualification in the same LLM call as the reply
+
+**Context:** A separate extraction call per message would double the wait
+for a local model.
+
+**Decision:** The reply call also returns `extracted` details (product,
+quantity, budget, timeline, city, intent, sentiment, wants_human). Keyword
+rules run on every message as well, so qualification works without an LLM;
+the product comes from the product search (category when the message names it,
+exact product only when it clearly beats the next match). Newer values replace
+older ones. Score = configurable points (defaults: product 20, budget 10 +10 if
+it covers the product, now/this week 25, this month 15, later 5, quantity 10,
+bulk 5, city 10, ready to buy 15, asking about price 8, 2+ messages 5,
+unhappy -10), capped at 100; hot >= 70, warm >= 40. The agent never overwrites
+a status the salesperson set (contacted/converted/lost). Rules and questions
+are stored per business (`business_settings`) and editable through
+`GET/PUT /api/settings/qualification` now; the Week 4 dashboard adds a form.
+
+`conversation_summary` is built from the extracted details ("Wants: X · Qty 2
+· Budget ₹15,000 · City: Chennai") instead of being LLM-written, so it never
+contains invented facts.
+
+**Docs updated:** Spec Rev 5 Sections 3.2, 3.3, 4; proposal Rev 4.
+
+---
+
+## D-018 - 2026-10-14 - Week 3 - Link posts and ads to products (found in the sandbox run)
+
+**Context:** The most common ad comment, "How much is this?", names no
+product. In the live run it got only a generic reply.
+
+**Decision:** `PUT /api/settings/content-products` maps a content ID
+(Instagram media ID, Facebook post ID, or Click-to-WhatsApp ad ID) to a SKU.
+Comments on a linked post, and CTWA chats from a linked ad, are answered about
+that product. Unlinked posts are named in the event note so the business can
+add them.
+
+**Docs updated:** Spec Rev 5 Section 3.2; proposal Rev 4.
+
+---
+
+## D-019 - 2026-10-14 - Week 3 - Alerts through a notifications outbox; log mode by default
+
+**Decision:** Alerts are rows in `notifications` (idempotent key), written in
+the agent's transaction and delivered by the worker afterwards, like
+messages. Kinds: hot lead (once when a lead turns hot), handoff (complaint,
+voice note/photo, asked for a person, assistant could not answer), and
+customer replied (a lead under human takeover wrote again). `ALERTS_MODE=log`
+(default) writes them to the log and `GET /api/notifications`; `live` sends
+email (SMTP) and/or Telegram, retrying a failed channel without repeating a
+successful one. A message asking for a person ("call me", "talk to someone",
+"baat karni hai") now hands off immediately with a short reply.
+
+**Docs updated:** Spec Rev 5 Sections 1, 2, 3.2, 4.
+
+---
+
+## D-020 - 2026-10-14 - Week 3 - Sheets mirror: CSV by default, Google via service account
+
+**Context:** Spec Section 8 describes per-user Google OAuth, which belongs to
+the later multi-business phase.
+
+**Decision:** `SHEETS_MODE=csv` writes `data/leads_mirror.csv` (UTF-8 with
+BOM so Excel shows ₹ and Indian-language names). `SHEETS_MODE=google` writes a
+Google Sheet with a service-account key (share the sheet with the service
+account's email). The whole table is rewritten at most every
+`SHEETS_SYNC_SECONDS`, only when something changed: one API call, no rate-limit
+concerns. On Windows a CSV open in Excel is locked; the write is retried on the
+next cycle. Per-user OAuth stays in the multi-business phase.
+
+**Docs updated:** Spec Rev 5 Sections 1, 4.6.
+
+---
+
+## D-021 - 2026-10-14 - Week 3 - Messages without a product use the lead's earlier interest
+
+**Context:** In testing, "ok thanks" from a hot lead found no product, so the
+assistant handed the lead to a person unnecessarily.
+
+**Decision:** When a message names no product, the search uses what the lead
+asked about before. The "nothing within your budget" note is only added when
+the budget really excluded matching products (it was shown wrongly in the run).
+
+**Docs updated:** Spec Rev 5 Section 10.

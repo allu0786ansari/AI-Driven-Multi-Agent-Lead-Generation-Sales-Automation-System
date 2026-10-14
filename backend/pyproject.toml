@@ -22,4 +22,7 @@ known-first-party = ["app", "scripts"]
 known-third-party = ["alembic"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["ARG001", "ARG005", "E501"]
+"tests/*" = ["ARG001", "ARG002", "ARG005", "E501"]
+# Keyword pattern lists read better on one line each
+"app/qualify/slots.py" = ["E501"]
+"app/agents/comments.py" = ["E501"]

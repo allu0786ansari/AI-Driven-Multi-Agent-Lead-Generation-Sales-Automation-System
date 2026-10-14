@@ -111,3 +111,24 @@ class EventType(StrEnum):
     INSTAGRAM_MESSAGE = "instagram.message"
     INSTAGRAM_MESSAGE_ECHO = "instagram.message_echo"
     UNKNOWN = "unknown"
+
+
+class NotificationKind(StrEnum):
+    HOT_LEAD = "hot_lead"
+    HANDOFF = "handoff"  # the AI handed the conversation to a person
+    CUSTOMER_REPLIED = "customer_replied"  # a lead under human takeover wrote again
+
+
+class NotificationStatus(StrEnum):
+    QUEUED = "queued"
+    SENT = "sent"  # delivered to at least one channel
+    LOGGED = "logged"  # ALERTS_MODE=log: written to the log only
+    FAILED = "failed"
+
+
+class CommentIntent(StrEnum):
+    PURCHASE_INTEREST = "purchase_interest"
+    PRODUCT_QUESTION = "product_question"
+    COMPLAINT = "complaint"
+    SPAM = "spam"
+    OTHER = "other"

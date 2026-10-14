@@ -1,8 +1,23 @@
 PROJECT PROPOSAL
 AI-Driven Multi-Agent Lead Generation & Sales Automation System
 ==================================================================
-Revision 3 - 14 October 2026 (updated during the Week 2 build)
+Revision 4 - 14 October 2026 (updated during the Week 3 build)
 (Companion document: technical_implementation_spec.txt)
+
+
+REVISION 4 NOTES (see docs/DECISIONS.md for the reasons)
+---------------------------------------------------------
+- Posts, reels and ads can be linked to the product they show, so
+  "How much is this?" under an ad is answered about the right product
+  (D-018).
+- The conversation summary is assembled from the details the customer
+  actually gave, not written by the LLM, so it never contains invented
+  facts (D-017).
+- Lead mirror: a CSV file that opens in Excel works out of the box; a
+  Google Sheet is written with a service account. Per-salesperson Google
+  sign-in stays in the multi-business phase (D-020).
+- Alerts to the salesperson also fire when a customer asks for a person
+  or writes again while a person is handling the conversation (D-019).
 
 
 REVISION 3 NOTES (see docs/DECISIONS.md for the reasons)
@@ -87,7 +102,8 @@ In scope:
 - Product-grounded responses via RAG; prices and stock always inserted from
   the catalog record, never written by the LLM
 - Conversational lead qualification with deterministic scoring
-- Lead data stored in a database, mirrored to Google Sheets (CRM stand-in)
+- Lead data stored in a database, mirrored to a CSV file or Google Sheet
+  (CRM stand-in)
 - Consent capture and records (opt-in, opt-out, source, timestamp)
 - Automated nurture / follow-up sequence using approved templates, for
   opted-in leads only
@@ -196,9 +212,9 @@ Data Layer
    - Database (SQLite for the prototype, Postgres later) is the system of
      record for leads, conversations, consent, conversation state and
      message costs.
-   - Google Sheets is a read-only mirror of the lead table so the
-     salesperson can browse leads in a familiar tool. Column design still
-     maps directly onto future CRM fields.
+   - Google Sheets (or a CSV file that opens in Excel) is a read-only mirror
+     of the lead table so the salesperson can browse leads in a familiar
+     tool. Column design still maps directly onto future CRM fields.
 
 Feedback Loop to Meta (stretch)
    - When a lead becomes qualified or converted, that stage is sent to Meta

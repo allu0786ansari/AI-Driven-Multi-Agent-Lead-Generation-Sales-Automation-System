@@ -51,6 +51,8 @@ class Lead(Base):
         Index(None, "user_id", "instagram_scoped_id"),
         Index(None, "user_id", "meta_lead_id"),
         Index(None, "user_id", "nurture_next_at"),
+        Index(None, "user_id", "messenger_scoped_id"),
+        Index(None, "user_id", "facebook_user_id"),
     )
 
     lead_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -62,6 +64,8 @@ class Lead(Base):
     contact_email: Mapped[str | None] = mapped_column(String(255))
     instagram_scoped_id: Mapped[str | None] = mapped_column(String(64))
     messenger_scoped_id: Mapped[str | None] = mapped_column(String(64))
+    # Facebook commenter ID (differs from the Messenger PSID; linked via the private reply)
+    facebook_user_id: Mapped[str | None] = mapped_column(String(64))
     preferred_channel: Mapped[str | None] = mapped_column(String(16))
     language: Mapped[str | None] = mapped_column(String(16))
 
@@ -235,3 +239,44 @@ class InboundEvent(Base):
     processed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     error: Mapped[str | None] = mapped_column(Text)  # last failure
     result_note: Mapped[str | None] = mapped_column(Text)  # what the handler did (shown in /api/events)
+
+
+class BusinessSetting(Base):
+    """Per-business configuration stored as JSON (qualification rules, sync state, ...)."""
+
+    __tablename__ = "business_settings"
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.user_id"), primary_key=True)
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
+class Notification(Base):
+    """Alerts for the salesperson (hot lead, handoff, ...). Sent by the worker like the outbox.
+
+    The Week 4 dashboard reads the same rows for its live notification feed.
+    """
+
+    __tablename__ = "notifications"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key"),
+        Index(None, "user_id", "created_at"),
+        Index(None, "status", "next_attempt_at"),
+    )
+
+    notification_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.user_id"))
+    lead_id: Mapped[str | None] = mapped_column(ForeignKey("leads.lead_id"))
+    kind: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str] = mapped_column(String(255))
+    body: Mapped[str] = mapped_column(Text)
+    idempotency_key: Mapped[str] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(16), default="queued")
+    channels_sent: Mapped[list[str]] = mapped_column(JSON, default=list)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    error: Mapped[str | None] = mapped_column(Text)
+    read_at: Mapped[datetime | None] = mapped_column(UTCDateTime)  # dashboard (Week 4)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)

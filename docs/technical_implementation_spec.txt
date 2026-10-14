@@ -1,8 +1,24 @@
 TECHNICAL IMPLEMENTATION SPECIFICATION
 AI-Driven Multi-Agent Lead Generation & Sales Automation System
 ==================================================================
-Revision 4 - 14 October 2026 (Week 2 build)
+Revision 5 - 14 October 2026 (Week 3 build)
 (Companion document to: project_proposal_ai_lead_gen_agent.txt)
+
+
+REVISION 5 NOTES (changes made during the Week 3 build - see
+docs/DECISIONS.md D-015 to D-021 for the reasons)
+----------------------------------------------------------------
+- Section 1: alerts (log / email / Telegram) and the lead mirror (CSV by
+  default, Google Sheets via service account) settled.
+- Section 2: comment handler, Qualify Agent, notifications outbox and
+  Sheets mirror added as components.
+- Section 3.2: GET/PUT /api/settings/qualification brought forward;
+  new GET/PUT /api/settings/content-products and GET /api/notifications.
+- Section 3.3: actual Week 3 interfaces.
+- Section 4: leads.facebook_user_id; new tables business_settings (4.8)
+  and notifications (4.9); Sheets mirror columns listed (4.6).
+- Section 10: comment classification, qualification extraction and the
+  "earlier interest" rule.
 
 
 REVISION 4 NOTES (changes made during the Week 2 build - see
@@ -81,9 +97,12 @@ Embeddings:            "hashing" (built in, no model) by default; a local
 Vector store:          product_embeddings table in the main database,
                        scored in Python (Rev 4, D-007); pgvector at scale
 Database:              SQLite (prototype) -> Postgres
-Sheets mirror:         Google Sheets API (read-only view for salesperson)
+Sheets mirror:         CSV file (default, opens in Excel) or Google Sheets
+                       API with a service-account key (Rev 5, D-020)
 Scheduler:             APScheduler
-Alerts:                SMTP email and/or Telegram Bot API
+Alerts:                SMTP email and/or Telegram Bot API; ALERTS_MODE=log
+                       (default) only logs them and lists them in
+                       GET /api/notifications (Rev 5)
 Local webhook tunnel:  ngrok with a static domain (free tier provides one)
 Hosting (prototype):   One always-on machine running backend + Ollama.
                        Do not use free tiers that sleep when idle.
@@ -120,8 +139,16 @@ Logging:               Structured JSON logs with a per-lead trace ID;
   fetch), each with a "fake" twin selected by META_API_MODE.
 - Database: source of truth for leads, conversations, consent, state,
   processed events and message costs.
-- Sheets sync worker: pushes lead-table changes to Google Sheets
-  (batched, to stay within API rate limits).
+- Comment handler: classifies each new comment, hides spam, creates the
+  lead, sends one private reply (plus an optional public reply), hands
+  complaints to a person (Rev 5).
+- Qualify Agent: merges details from the LLM and keyword rules into
+  leads.qualify_slots, scores with the business's rubric, picks the next
+  question, flags newly hot leads (Rev 5).
+- Notifications outbox: salesperson alerts written in the agent's
+  transaction, delivered by the worker via email / Telegram (Rev 5).
+- Sheets sync worker: rewrites the lead mirror (CSV or Google Sheet) at
+  most every SHEETS_SYNC_SECONDS when something changed (Rev 5).
 - Meta feedback worker (stretch): sends lead stage changes to Conversions
   API for CRM.
 - React frontend: salesperson dashboard (lead inbox, lead detail with
@@ -243,9 +270,21 @@ Logging:               Structured JSON logs with a per-lead trace ID;
       - Lists WhatsApp templates and their Meta approval status
 
   GET  /api/settings/qualification
-  PUT  /api/settings/qualification
+  PUT  /api/settings/qualification            (available from Week 3)
       - Qualifying questions, scoring weights and hot/warm/cold thresholds
-        (business config, not code)
+        (business config, not code). Body: {questions: [{slot, question}],
+        weights: {...}, bulk_threshold, hot_threshold, warm_threshold}.
+        Slots: product, quantity, timeline, city, budget. 422 if warm >= hot.
+
+  GET  /api/settings/content-products
+  PUT  /api/settings/content-products          (Rev 5, D-018)
+      - {"links": {"<Instagram media ID | Facebook post ID | CTWA ad ID>":
+        "<SKU>"}}. Comments on a linked post and CTWA chats from a linked ad
+        are answered about that product. 422 for unknown SKUs.
+
+  GET  /api/notifications                      (Rev 5)
+      - Alerts sent to the salesperson (hot_lead, handoff,
+        customer_replied), newest first, with delivery status.
 
   GET /api/analytics/summary
       - Leads captured (today/week), conversion rate, median response
@@ -265,12 +304,18 @@ Logging:               Structured JSON logs with a per-lead trace ID;
   capture.capture_whatsapp_message(session, user_id, payload) -> CaptureResult
   capture.capture_lead_form(session, user_id, lead_data) -> CaptureResult
       # (Rev 4: one function per source instead of normalize_lead)
-  engage_agent.handle_comment(comment: CommentEvent) -> AgentAction
-  engage_agent.handle_dm(lead_id: str, message: InboundMessage) -> AgentAction
-  qualify_agent.process_message(lead_id: str, message: InboundMessage)
-      -> QualifyResult          # includes extracted slots + reply draft
-  scoring.score(slots: QualifySlots, config: ScoringConfig)
+  capture.capture_comment(session, user_id, CommentInfo) -> CaptureResult
+  capture.capture_meta_message(session, user_id, channel, payload)
+      -> CaptureResult          # Instagram DM / Messenger
+  comments.handle_comment(session, user_id, CommentInfo) -> HandlerResult
+  engage.respond_to_message(session, capture, channel) -> HandlerResult
+      # any channel: opt-out, takeover, ask-for-person, media, product reply
+  qualify.process_message(session, lead, text, llm_slots, hits)
+      -> QualifyResult          # slots, score, status, became_hot, next_question
+  scoring.score(slots, config, inbound_messages, reference_price)
       -> ScoreResult            # pure function, no LLM
+  alerts.notify(session, lead, kind, reason, idempotency_key, last_message)
+  sheets.sync_all() -> int      # leads mirror (worker, periodic)
   nurture_agent.run_daily_check() -> list[LeadRecord]   (scheduled job)
   rag.get_product_context(session, user_id, query, top_k=3,
       filters: ProductFilters | None = None) -> list[RetrievedProduct]
@@ -283,8 +328,6 @@ Logging:               Structured JSON logs with a per-lead trace ID;
       sender=..., context_products=...) -> SendResult
                                 # queued / needs_template / blocked + reason
   outbox.deliver_pending() -> counts   # sends queued messages (worker)
-  alerts.notify_salesperson(lead_id: str, reason: str) -> None
-  sheets_sync.push(lead_ids: list[str]) -> None
   meta_feedback.report_stage(lead_id: str, stage: str) -> None  (stretch)
 
   These boundaries are what allow splitting into separate services later
@@ -307,6 +350,9 @@ migration of existing rows.
   instagram_scoped_id     - for Instagram leads
   messenger_scoped_id     - for Messenger leads (Rev 3: Facebook and
                             Instagram use different scoped IDs)
+  facebook_user_id        - Facebook commenter ID (differs from the
+                            Messenger ID; linked through the private
+                            reply's recipient_id - Rev 5, D-015)
   preferred_channel       - whatsapp | instagram | messenger
   language                - detected language of the lead's messages
   source                  - ctwa_ad | ad_form | comment | dm | website_chat
@@ -392,6 +438,24 @@ migration of existing rows.
 4.6 Google Sheets mirror
   One row per lead with a subset of 4.1 (no tokens, no full conversation
   text). Written by the sync worker in batches; never read back as truth.
+  Columns (Rev 5): Lead ID, Name, Phone, Email, Instagram ID, Channel,
+  Source, Source detail, Ad ID, Campaign ID, Product interest, Score,
+  Status, Summary, Why this score, Assigned to, Human handling, WhatsApp
+  opt-in, Opted out, Messaging cost (INR), Created, Last activity.
+  Newest activity first. Written as CSV (UTF-8 with BOM) or to a Google
+  Sheet tab; rewritten only when the content changed.
+
+4.8 business_settings (Rev 5)
+  user_id + key (primary key), value (JSON), updated_at. Keys:
+  "qualification" (rules, see 3.2), "content_products" (post/ad -> SKU
+  links), "sheets_sync" (hash and row count of the last mirror write).
+
+4.9 notifications (Rev 5, D-019)
+  notification_id, user_id, lead_id, kind (hot_lead | handoff |
+  customer_replied), title, body, idempotency_key (unique), status
+  (queued | sent | logged | failed), channels_sent (JSON list), attempts,
+  next_attempt_at, error, read_at (for the Week 4 dashboard), created_at,
+  sent_at.
 
 4.7 product_embeddings (Rev 4, D-007)
   product_id (PK, deleted with the product), user_id, model (e.g.
@@ -650,6 +714,18 @@ Instagram / Facebook
 - Budget filters: "under 5000", "5k tak", "6000 se kam", "budget Rs 3,500"
   are read from the message and applied before search; if nothing fits
   the budget, the closest products are shown and the LLM is told so.
+- Messages that name no product ("ok thanks", "when can you deliver?")
+  are answered about the lead's earlier product interest (Rev 5, D-021).
+- Comment classification (Rev 5, D-016): LLM with JSON output; keyword
+  rules when no model is configured or it fails, and as an override for
+  obvious spam links and complaints.
+- Qualification (Rev 5, D-017): the reply call also returns "extracted"
+  details; keyword rules run on every message (budget, quantity, timeline
+  now/this_week/this_month/later, city or 6-digit PIN, intent, negative
+  sentiment, asking for a person). Each reply ends with the next missing
+  qualifying question from the business's list.
+- Asking for a person ("call me", "talk to someone", "baat karni hai")
+  hands off immediately with a short holding reply and an alert.
 - Scope: system prompt restricts the agent to the business's products,
   orders and policies; unrelated requests get a polite decline.
 - Prompt injection: customer text is placed in clearly delimited user

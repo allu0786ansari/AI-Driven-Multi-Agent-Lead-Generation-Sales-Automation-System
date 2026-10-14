@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import timedelta
 
 from sqlalchemy import or_, select, update
 
+from app.alerts.notify import deliver_notifications
 from app.config import get_settings
 from app.db.base import utcnow
 from app.db.enums import EventStatus
@@ -22,6 +24,7 @@ from app.db.session import session_scope
 from app.logging_config import trace_id_var
 from app.messaging.outbox import deliver_pending
 from app.router.dispatcher import dispatch
+from app.sheets.mirror import get_writer, sync_all
 
 log = logging.getLogger(__name__)
 
@@ -104,10 +107,15 @@ def process_pending(limit: int = 50) -> dict[str, int]:
 
 
 def run_once() -> dict[str, int]:
-    """One worker cycle: handle due events, then send the messages they queued."""
+    """One worker cycle: handle due events, send the messages they queued, then the alerts."""
     counts = process_pending()
     sent = deliver_pending()
-    return {**{f"event_{k}": v for k, v in counts.items()}, **{f"message_{k}": v for k, v in sent.items()}}
+    alerts = deliver_notifications()
+    return {
+        **{f"event_{k}": v for k, v in counts.items()},
+        **{f"message_{k}": v for k, v in sent.items()},
+        **{f"alert_{k}": v for k, v in alerts.items() if k != "skipped"},
+    }
 
 
 class Worker:
@@ -122,6 +130,26 @@ class Worker:
         self._wake = asyncio.Event()
         self._stop = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
+        self._sheets_writer = None
+        self._sheets_disabled = False
+        self._last_sheets_sync = 0.0
+
+    def _sync_sheets_if_due(self) -> None:
+        """Runs in a worker thread. Rewrites the lead mirror at most every SHEETS_SYNC_SECONDS."""
+        settings = get_settings()
+        if settings.sheets_mode == "off" or self._sheets_disabled:
+            return
+        if time.monotonic() - self._last_sheets_sync < settings.sheets_sync_seconds:
+            return
+        self._last_sheets_sync = time.monotonic()
+        if self._sheets_writer is None:
+            try:
+                self._sheets_writer = get_writer()
+            except (ValueError, OSError) as exc:
+                self._sheets_disabled = True
+                log.error("sheets mirror disabled: %s", exc)
+                return
+        sync_all(self._sheets_writer)
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._run(), name="event-worker")
@@ -145,6 +173,7 @@ class Worker:
                     counts = await asyncio.to_thread(run_once)
                     if not counts:
                         break
+                await asyncio.to_thread(self._sync_sheets_if_due)
             except Exception:  # noqa: BLE001 - keep the worker alive
                 log.exception("worker loop error")
             try:

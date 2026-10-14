@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
@@ -101,6 +102,43 @@ class Settings(BaseSettings):
     outbox_max_attempts: int = 3
     outbox_backoff_seconds: float = 10.0
 
+    # ---- Week 3: Instagram / Messenger ----
+    meta_page_id: str = ""  # Facebook Page ID (sends for Messenger, and Instagram via Facebook Login)
+    instagram_account_id: str = ""  # Instagram professional account ID (to ignore our own comments)
+    # Instagram API host: graph.facebook.com (Instagram via Facebook Login, default)
+    # or graph.instagram.com (Instagram API with Instagram Login - then INSTAGRAM_ACCESS_TOKEN is used)
+    instagram_api_base_url: str = "https://graph.facebook.com"
+    instagram_access_token: str = ""  # empty = use META_PAGE_ACCESS_TOKEN
+    comment_public_reply: bool = True  # also post a short public reply ("Sent you a message!")
+    comment_public_reply_text: str = "Thanks! We've sent you a message 😊"
+    comment_hide_spam: bool = True
+    private_reply_window_days: int = 7
+
+    # ---- Week 3: alerts to the salesperson ----
+    # "log" = write alerts to the log and database only; "live" = really send
+    alerts_mode: Literal["log", "live"] = "log"
+    alert_channels: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["email", "telegram"])
+    dashboard_url: str = "http://127.0.0.1:8000/docs"
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_starttls: bool = True
+    alert_email_from: str = ""
+    alert_email_to: str = ""
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    telegram_api_base_url: str = "https://api.telegram.org"
+
+    # ---- Week 3: Google Sheets mirror ----
+    # "off", "csv" (writes data/leads_mirror.csv - opens in Excel), or "google"
+    sheets_mode: Literal["off", "csv", "google"] = "csv"
+    sheets_sync_seconds: float = 60.0
+    sheets_csv_path: str = str(BACKEND_DIR / "data" / "leads_mirror.csv")
+    google_service_account_file: str = ""  # JSON key of a service account with access to the sheet
+    google_sheet_id: str = ""
+    google_sheet_tab: str = "Leads"
+
     # Tenancy: the prototype serves one business. Leave empty to use the first
     # user in the database; set it to pin events to a specific user_id.
     default_user_id: str = ""
@@ -119,10 +157,23 @@ class Settings(BaseSettings):
                 return prefix + (BACKEND_DIR / path).resolve().as_posix()
         return v
 
-    @field_validator("catalog_path")
+    @field_validator("catalog_path", "sheets_csv_path", "google_service_account_file")
     @classmethod
-    def _absolute_catalog_path(cls, v: str) -> str:
+    def _absolute_file_path(cls, v: str) -> str:
+        if not v:
+            return v
         return v if Path(v).is_absolute() else str((BACKEND_DIR / v).resolve())
+
+    @field_validator("alert_channels", mode="before")
+    @classmethod
+    def _split_channels(cls, v: object) -> object:
+        # Allow ALERT_CHANNELS=email,telegram in .env as well as JSON lists.
+        if isinstance(v, str):
+            text = v.strip()
+            if text.startswith("["):
+                return json.loads(text)
+            return [c.strip() for c in text.split(",") if c.strip()]
+        return v
 
     @property
     def is_sqlite(self) -> bool:

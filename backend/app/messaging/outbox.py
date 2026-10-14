@@ -23,11 +23,11 @@ from sqlalchemy import select, update
 
 from app.config import get_settings
 from app.db.base import utcnow
-from app.db.enums import DeliveryStatus, Direction
+from app.db.enums import Channel, DeliveryStatus, Direction
 from app.db.models import Lead, Message
 from app.db.session import session_scope
 from app.integrations.errors import ExternalAPIError
-from app.integrations.factory import get_whatsapp_sender
+from app.integrations.factory import get_meta_messaging, get_whatsapp_sender
 
 log = logging.getLogger(__name__)
 
@@ -73,21 +73,48 @@ def _fail_stuck() -> int:
         return res.rowcount or 0
 
 
+def _dispatch(msg: Message, lead: Lead) -> tuple[str, str | None]:
+    """Call the right API for this message. Returns (platform message id, recipient id)."""
+    payload = msg.payload or {}
+    kind = payload.get("type")
+    if msg.channel == Channel.WHATSAPP:
+        sender = get_whatsapp_sender()
+        if kind == "template":
+            receipt = sender.send_template(
+                lead.contact_phone, payload["name"], payload["language"], payload.get("params", [])
+            )
+        else:
+            receipt = sender.send_text(lead.contact_phone, msg.text or "")
+        return receipt.platform_message_id, None
+
+    meta = get_meta_messaging()
+    if kind == "private_reply":
+        r = meta.send_private_reply(msg.channel, payload["comment_id"], msg.text or "")
+        return r.platform_message_id, r.recipient_id
+    if kind == "public_reply":
+        return meta.reply_publicly(msg.channel, payload["comment_id"], msg.text or ""), None
+    r = meta.send_dm(msg.channel, payload["recipient_id"], msg.text or "")
+    return r.platform_message_id, r.recipient_id
+
+
+def _link_recipient(lead: Lead, channel: str, recipient_id: str | None) -> None:
+    """A private reply's response tells us the commenter's messaging ID; keep it for their DMs."""
+    if not recipient_id:
+        return
+    if channel == Channel.MESSENGER and not lead.messenger_scoped_id:
+        lead.messenger_scoped_id = recipient_id
+    elif channel == Channel.INSTAGRAM and not lead.instagram_scoped_id:
+        lead.instagram_scoped_id = recipient_id
+
+
 def _send_one(message_id: str) -> str:
     settings = get_settings()
-    sender = get_whatsapp_sender()
     with session_scope() as s:
         msg = s.get(Message, message_id)
         lead = s.get(Lead, msg.lead_id)
         msg.attempts += 1
-        payload = msg.payload or {}
         try:
-            if payload.get("type") == "template":
-                receipt = sender.send_template(
-                    lead.contact_phone, payload["name"], payload["language"], payload.get("params", [])
-                )
-            else:
-                receipt = sender.send_text(lead.contact_phone, msg.text or "")
+            platform_id, recipient_id = _dispatch(msg, lead)
         except ExternalAPIError as exc:
             msg.error = str(exc)[:2000]
             if exc.transient and msg.attempts < settings.outbox_max_attempts:
@@ -104,11 +131,15 @@ def _send_one(message_id: str) -> str:
             msg.error = f"{type(exc).__name__}: {exc}"[:2000]
             log.exception("message send crashed")
             return msg.delivery_status
-        msg.platform_message_id = receipt.platform_message_id
+        msg.platform_message_id = platform_id
+        _link_recipient(lead, msg.channel, recipient_id)
         msg.delivery_status = DeliveryStatus.SENT
         msg.sent_at = utcnow()
         msg.error = None
-        log.info("message sent", extra={"lead_id": lead.lead_id, "template": msg.template_name})
+        log.info(
+            "message sent",
+            extra={"lead_id": lead.lead_id, "channel": msg.channel, "kind": (msg.payload or {}).get("type")},
+        )
         return msg.delivery_status
 
 

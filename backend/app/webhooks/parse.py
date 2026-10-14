@@ -65,6 +65,8 @@ def parse_webhook(body: dict[str, Any]) -> ParseResult:
             continue
         entry_id = str(entry.get("id", ""))
         ctx = {"object": obj, "entry_id": entry_id}
+        if entry.get("time") is not None:
+            ctx["entry_time"] = entry["time"]  # seconds for changes, milliseconds for messaging
 
         for change in entry.get("changes") or []:
             _parse_change(obj, change, ctx, result)

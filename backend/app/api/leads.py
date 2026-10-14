@@ -16,8 +16,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import CurrentUser
-from app.db.models import Lead, Message
+from app.catalog.links import ContentLinks, get_links, save_links
+from app.db.models import Lead, Message, Notification
 from app.db.session import get_db
+from app.qualify.config import QualificationConfig, get_config, save_config
 from app.rag.query import parse_price_constraints
 from app.rag.retrieve import get_product_context
 
@@ -32,6 +34,8 @@ class LeadSummary(BaseModel):
     product_interest: str | None
     status: str
     qualification_score: int | None
+    conversation_summary: str | None
+    preferred_channel: str | None
     whatsapp_opt_in: bool
     opted_out: bool
     is_human_takeover: bool
@@ -67,6 +71,11 @@ class LeadDetail(LeadSummary):
     opt_in_at: datetime | None
     service_window_expires_at: datetime | None
     free_entry_window_expires_at: datetime | None
+    instagram_scoped_id: str | None
+    messenger_scoped_id: str | None
+    qualify_slots: dict[str, Any]
+    qualify_state: str | None
+    score_rationale: str | None
     messages: list[MessageOut]
 
 
@@ -127,3 +136,69 @@ def search_products(
             for h in hits
         ],
     }
+
+
+# ------------------------------------------------------------- Week 3: settings + alerts
+
+
+@router.get("/settings/qualification", response_model=QualificationConfig)
+def get_qualification(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> QualificationConfig:
+    """Qualifying questions (asked in this order), scoring weights and hot/warm thresholds."""
+    return get_config(db, user.user_id)
+
+
+@router.put("/settings/qualification", response_model=QualificationConfig)
+def put_qualification(
+    config: QualificationConfig, user: CurrentUser, db: Annotated[Session, Depends(get_db)]
+) -> QualificationConfig:
+    """Replace the qualification rules. Applies to the next message each lead sends."""
+    save_config(db, user.user_id, config)
+    db.commit()
+    return config
+
+
+@router.get("/settings/content-products", response_model=ContentLinks)
+def get_content_products(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> ContentLinks:
+    """Which product each post / reel / ad shows: {"links": {"<content id>": "<SKU>"}}."""
+    return get_links(db, user.user_id)
+
+
+@router.put("/settings/content-products", response_model=ContentLinks)
+def put_content_products(
+    links: ContentLinks, user: CurrentUser, db: Annotated[Session, Depends(get_db)]
+) -> ContentLinks:
+    """Replace all links. Content IDs: Instagram media ID, Facebook post ID, or Click-to-WhatsApp ad ID."""
+    unknown = save_links(db, user.user_id, links)
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unknown SKU(s): {', '.join(unknown)}")
+    db.commit()
+    return links
+
+
+class NotificationOut(BaseModel):
+    notification_id: str
+    lead_id: str | None
+    kind: str
+    title: str
+    body: str
+    status: str
+    channels_sent: list[str]
+    error: str | None
+    created_at: datetime
+    sent_at: datetime | None
+
+
+@router.get("/notifications", response_model=list[NotificationOut])
+def list_notifications(
+    user: CurrentUser,
+    db: Annotated[Session, Depends(get_db)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[NotificationOut]:
+    """Alerts sent to the salesperson (hot leads, handoffs, replies during takeover), newest first."""
+    rows = db.scalars(
+        select(Notification)
+        .where(Notification.user_id == user.user_id)
+        .order_by(Notification.created_at.desc())
+        .limit(limit)
+    ).all()
+    return [NotificationOut.model_validate(r, from_attributes=True) for r in rows]

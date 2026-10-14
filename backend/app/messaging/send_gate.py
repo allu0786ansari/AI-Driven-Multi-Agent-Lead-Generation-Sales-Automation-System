@@ -5,9 +5,12 @@ Every outbound message is decided here, in this order:
   1. Idempotency    - the same key never creates a second message
   2. Opt-out        - nothing goes to a lead who opted out (except the opt-out confirmation)
   3. Human takeover - agents stay silent while a salesperson has the conversation
-  4. Channel        - WhatsApp now; Instagram/Messenger arrive in Week 3
-  5. Window rules   - free-form text only inside the 24h service window,
-                      otherwise a pre-approved template is required
+  4. Channel        - WhatsApp, Instagram, Messenger (Week 3)
+  5. Window rules   - WhatsApp: free-form text only inside the 24h service
+                      window, otherwise a pre-approved template is required.
+                      Instagram/Messenger: DMs only within 24h of the lead's
+                      last message on that channel; one private reply per
+                      comment within 7 days of the comment; no templates.
   6. Consent        - marketing templates need recorded WhatsApp opt-in
   7. Guardrails     - agent text must pass the price/claim checks
   8. Cost           - free inside the 72h free entry window (opened by replying
@@ -55,6 +58,10 @@ class OutboundContent:
     template_params: list[str] = field(default_factory=list)
     template_category: PricingCategory = PricingCategory.MARKETING
     language: str | None = None
+    # Instagram / Facebook comments (Week 3). `text` holds the message.
+    private_reply_to: str | None = None  # comment ID: one private message to the commenter
+    public_reply_to: str | None = None  # comment ID: visible reply under the comment
+    comment_created_at: datetime | None = None
 
     @property
     def is_template(self) -> bool:
@@ -109,12 +116,21 @@ def queue_message(
         return blocked("lead opted out")
     if sender == Sender.AGENT and lead.is_human_takeover:
         return blocked("human takeover active")
-    if channel != Channel.WHATSAPP:
-        return blocked(f"channel {channel} not supported yet")
-    if not lead.contact_phone:
-        return blocked("lead has no WhatsApp number")
     if (content.text is None) == (content.template_name is None):
         raise ValueError("OutboundContent needs exactly one of text or template_name")
+    if sender == Sender.AGENT and context_products is not None and content.text is not None:
+        check = validate_reply(content.text, context_products, customer_text)
+        if not check.ok:
+            return blocked("guardrail: " + "; ".join(check.problems))
+
+    if channel in (Channel.INSTAGRAM, Channel.MESSENGER):
+        return _queue_meta(session, lead, content, channel, sender, idempotency_key, now, blocked)
+    if channel != Channel.WHATSAPP:
+        return blocked(f"channel {channel} not supported")
+    if content.private_reply_to or content.public_reply_to:
+        return blocked("comment replies are only for Instagram/Messenger")
+    if not lead.contact_phone:
+        return blocked("lead has no WhatsApp number")
 
     free_entry = _open(lead.free_entry_window_expires_at, now)
     opens_free_entry = (
@@ -138,10 +154,6 @@ def queue_message(
     else:
         if not _open(lead.service_window_expires_at, now):
             return SendResult(Decision.NEEDS_TEMPLATE, "24-hour service window is closed")
-        if sender == Sender.AGENT and context_products is not None:
-            check = validate_reply(content.text or "", context_products, customer_text)
-            if not check.ok:
-                return blocked("guardrail: " + "; ".join(check.problems))
         if opens_free_entry:
             lead.free_entry_window_expires_at = now + FREE_ENTRY_WINDOW
             free_entry = True
@@ -150,6 +162,24 @@ def queue_message(
         preview = content.text
 
     cost = Decimal("0") if category == PricingCategory.FREE_ENTRY else _rate(category)
+    return _record(
+        session, lead, channel, sender, preview, content, category, cost, idempotency_key, payload, now
+    )
+
+
+def _record(
+    session: Session,
+    lead: Lead,
+    channel: Channel,
+    sender: Sender,
+    preview: str | None,
+    content: OutboundContent,
+    category: PricingCategory,
+    cost: Decimal,
+    idempotency_key: str,
+    payload: dict,
+    now: datetime,
+) -> SendResult:
     message = Message(
         user_id=lead.user_id,
         lead_id=lead.lead_id,
@@ -171,3 +201,53 @@ def queue_message(
     lead.last_activity_at = now
     session.flush()
     return SendResult(Decision.QUEUED, "", message)
+
+
+def last_inbound_at(session: Session, lead: Lead, channel: Channel) -> datetime | None:
+    return session.scalar(
+        select(Message.timestamp)
+        .where(
+            Message.lead_id == lead.lead_id,
+            Message.channel == channel,
+            Message.direction == Direction.INBOUND,
+            Message.media_type != "comment",  # a comment does not open the DM window
+        )
+        .order_by(Message.timestamp.desc())
+        .limit(1)
+    )
+
+
+def _queue_meta(
+    session: Session,
+    lead: Lead,
+    content: OutboundContent,
+    channel: Channel,
+    sender: Sender,
+    idempotency_key: str,
+    now: datetime,
+    blocked,  # noqa: ANN001
+) -> SendResult:
+    """Instagram / Messenger rules. No per-message fee on these channels."""
+    if content.is_template:
+        return blocked(f"templates are not available on {channel}")
+
+    if content.private_reply_to:
+        created = content.comment_created_at or now
+        if now - created > timedelta(days=get_settings().private_reply_window_days):
+            return blocked("private reply window (7 days after the comment) has passed")
+        payload = {"type": "private_reply", "comment_id": content.private_reply_to}
+    elif content.public_reply_to:
+        payload = {"type": "public_reply", "comment_id": content.public_reply_to}
+    else:
+        recipient = lead.instagram_scoped_id if channel == Channel.INSTAGRAM else lead.messenger_scoped_id
+        if not recipient:
+            return blocked(f"lead has no {channel} ID yet (they have not messaged us there)")
+        last = last_inbound_at(session, lead, channel)
+        if last is None or now - last > timedelta(hours=24):
+            return blocked(f"24-hour {channel} messaging window is closed")
+        payload = {"type": "text", "recipient_id": recipient}
+
+    return _record(
+        session, lead, channel, sender, content.text, content, PricingCategory.FREE, Decimal("0"),
+        idempotency_key, payload, now,
+    )  # fmt: skip

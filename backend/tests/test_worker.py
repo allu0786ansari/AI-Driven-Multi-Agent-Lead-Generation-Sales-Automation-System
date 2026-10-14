@@ -28,12 +28,21 @@ def _make_due(event_id: str) -> None:
         s.get(InboundEvent, event_id).next_attempt_at = utcnow() - timedelta(seconds=1)
 
 
-def test_registered_handlers_week2() -> None:
-    assert registered_types() == ["page.leadgen", "whatsapp.message", "whatsapp.status"]
+def test_registered_handlers_week3() -> None:
+    assert registered_types() == [
+        "instagram.comment",
+        "instagram.message",
+        "page.comment",
+        "page.leadgen",
+        "page.message",
+        "whatsapp.message",
+        "whatsapp.status",
+    ]
 
 
 def test_unhandled_event_marked_ignored(client: TestClient) -> None:
-    # Instagram comments get a handler in Week 3.
+    # Since Week 3 every real event type has a handler; remove them to test the "no handler" path.
+    clear_handlers()
     signed_post(client, "/webhooks/meta/instagram", p.instagram_comment())
     assert process_pending() == {"ignored": 1}
     [ev] = _all()

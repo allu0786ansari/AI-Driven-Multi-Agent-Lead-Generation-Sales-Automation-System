@@ -290,3 +290,126 @@ forms need the `lead_form_welcome` template approved first.
 Comment-to-lead (one private reply per comment), Instagram/Messenger DM
 conversations, Qualify Agent (slot extraction + scoring rubric), hot-lead
 alerts by email/Telegram, Google Sheets mirror.
+
+---
+
+## Week 3 - Comments, DMs, qualification, alerts, Sheets mirror (2026-10-14) - branch `week-3`
+
+### What was built
+
+| Area | Files | Notes |
+|---|---|---|
+| Comment-to-lead | `app/agents/comments.py` | Intent (LLM + rules), one private reply ending with a question, public reply, spam hidden, complaints handed off |
+| Instagram / Messenger | `app/agents/capture.py`, `app/handlers/meta.py`, `app/integrations/meta_messaging.py` | DM leads, private replies, Messenger ID linked from the private reply, 24h DM window, 7-day private-reply window |
+| One flow for all channels | `app/agents/engage.py` | Opt-out, takeover, "call me" handoff, media handoff, product reply + next question |
+| Qualify Agent | `app/qualify/*` | Details from LLM + rules, scoring rubric, hot/warm/cold, next question, summary; rules editable per business |
+| Post/ad -> product links | `app/catalog/links.py` | "How much is this?" under a linked post/ad gets that product's price |
+| Alerts | `app/alerts/*` | Hot lead / handoff / customer replied; log mode, email, Telegram; never sent twice |
+| Lead mirror | `app/sheets/mirror.py` | CSV (opens in Excel) or Google Sheet via service account; rewritten only on change |
+| API | `app/api/leads.py` | `GET/PUT /api/settings/qualification`, `GET/PUT /api/settings/content-products`, `GET /api/notifications`; lead detail shows score, rationale, details |
+| Database | `alembic/versions/0003_*` | `business_settings`, `notifications`, `leads.facebook_user_id` |
+| Docs | spec Rev 5, proposal Rev 4, DECISIONS D-015..D-021, meta_setup sections 7-9 | |
+
+### What now happens
+
+- **Instagram comment "price?"** → lead (Instagram ID = their DM ID) → one private DM with prices, ending with a question → public reply "We've sent you a message" → when they answer in DMs the same lead continues.
+- **Facebook comment** → same, through Messenger; their Messenger ID is learned from the private reply so the conversation stays one lead.
+- **Spam comment** → hidden. **Compliment/emoji** → ignored. **Complaint** → "sorry, a person will message you" + handed off + alert.
+- **Every message** updates product, quantity, budget, timeline, city, intent → score 0-100 → hot (>= 70) / warm (>= 40) / cold. Each reply ends with the next unanswered question.
+- **Lead turns hot** → alert once. **"Call me" / voice note / complaint** → handed to a person + alert. **Customer writes during a takeover** → alert, AI stays quiet.
+- **Lead mirror** → `backend/data/leads_mirror.csv` refreshed every 60 s when something changed.
+
+### Test results (sandbox, before publishing)
+
+- `pytest`: **245 passed** on Python 3.13.16 and 3.11.17 (186 from Weeks 1-2 + 59 new).
+  - test_webhooks 35, test_comments_dms 29, test_system 25, test_rag 23, test_send_gate 18, test_qualify 17, test_capture 15, test_flows 15, test_guardrails 15, test_worker 11, test_auth 10, test_llm 10, test_alerts_sheets 9, test_catalog 9, test_flows_week3 4
+  - 4 earlier tests were updated because their expectation changed by design: Instagram is now supported (send gate reason), every event type now has a handler (2 worker tests), the Instagram comment in the events API test is now processed.
+- `ruff check` / `ruff format --check`: clean.
+- **Migration on real data**: Week 2 sandbox database (7 leads, 14 messages, 32 events, 8 vectors) upgraded `0002 -> 0003` without loss.
+- **Live run** (`simulate all` with the new scenarios), checked in the database:
+  - IG hot conversation (`priya_k`): comment → private + public reply → 2 DMs → score 100, **hot**, alert logged. Summary: "Wants: Air Fryers · Qty 2 · Budget ₹15,000 · Timeline: now · City: Chennai".
+  - WhatsApp hot conversation: score 100, hot, alert; summary with the exact 6L model.
+  - Spam comment hidden; Facebook complaint: apology private reply + handoff alert; "Can someone call me please?": short reply + handoff alert; Messenger ID linked from the private reply.
+  - CSV mirror: 17 leads, 22 columns, UTF-8 BOM present.
+- **Found in the live run and fixed** (regression tests added for each):
+  1. "How much is this?" under an ad got only a generic reply → post/ad → product links (D-018).
+  2. A "nothing within the stated budget" note appeared when the message named no product at all.
+  3. Instagram comments were time-stamped when processed, not when Meta delivered them, so they sorted after later DMs.
+  4. (Found by the tests before the run) the reply asked "Which product are you interested in?" right after the customer named one, and "ok thanks" from a hot lead caused an unnecessary handoff → next question now considers the product search, and product-less messages use the earlier interest (D-021).
+
+### Run it on Windows
+
+**1. Get Week 3** (after merging the Week 3 PR, or `git checkout week-3`)
+```powershell
+git checkout main
+git pull
+pip install -r requirements-dev.txt     # adds the cryptography package (Google Sheets signing)
+```
+
+**2. Settings** - copy the `# ---- Week 3 ----` block from `.env.example` to the end
+of your `.env`. Defaults are safe: alerts only logged, mirror written as CSV.
+
+**3. Upgrade and test**
+```powershell
+python -m alembic upgrade head      # Running upgrade 0002 -> 0003
+python -m pytest                    # 245 passed
+```
+
+**4. Try it**
+```powershell
+python -m uvicorn app.main:app --reload
+# second window:
+python -m scripts.simulate ig-hot
+python -m scripts.simulate wa-hot
+python -m scripts.simulate fb-complaint
+python -m scripts.simulate ig-spam
+python -m scripts.simulate human
+```
+Then in http://127.0.0.1:8000/docs (Authorize first):
+- `GET /api/leads` - the hot leads show `status: hot` and a summary
+- `GET /api/notifications` - hot-lead and handoff alerts
+- `GET /api/settings/qualification` - change questions/weights with `PUT`
+- open `backend\data\leads_mirror.csv` in Excel (close it again before the next refresh)
+
+**5. Link a post or ad to a product** - in `/docs`, `PUT /api/settings/content-products`
+with `{"links": {"17900000000000042": "AF-6L-WIN"}}`, then
+```powershell
+python -m scripts.simulate ig-comment --media 17900000000000042
+```
+`GET /api/leads` shows the commenter interested in the 6L air fryer, and the
+private reply (in the lead detail) lists its price. With real Instagram, use the
+media ID shown in the lead's source detail.
+
+**6. Real alerts** - follow `docs/meta_setup.md` section 8 (Telegram takes 2
+minutes), set `ALERTS_MODE=live`, restart the server, then
+```powershell
+python -m scripts.simulate human --lead-phone 919811199999
+```
+A "Needs a person" alert arrives in Telegram/email. Use a new `--lead-phone`
+each time (a lead already handed to a person does not alert again for the
+same reason).
+
+**7. Real Instagram/Messenger** (Meta app ready) - `docs/meta_setup.md` section 7,
+`META_API_MODE=live`, comment "price?" on your own post from another account.
+
+**8. Google Sheet instead of CSV** - `docs/meta_setup.md` section 9.
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| Comment got the generic "What would you like to know" reply | Post not linked to a product (see step 5), or no product words in the comment |
+| Lead stays cold although the customer gave details | Check `GET /api/leads/{id}` → `qualify_slots` and `score_rationale`; adjust weights with `PUT /api/settings/qualification` |
+| `leads_mirror.csv` not updating | It is open in Excel (Windows locks it); close it, it refreshes within a minute |
+| No Telegram alert | `ALERTS_MODE=live`, `ALERT_CHANNELS` includes `telegram`, you messaged the bot once; errors appear in `GET /api/notifications` |
+| Live Instagram send fails with a permissions error | Check `instagram_manage_messages` / comment permissions and "Connected tools" in the Instagram app |
+
+### Your actions this week
+- Steps 1-4 on your PC; tell me if anything fails.
+- Decide what makes a lead "hot" for your business; I can set the defaults for you if you tell me (e.g. "budget above ₹5,000 and buying this week").
+- Set up Telegram alerts (section 8) - it is the quickest way to see the system working for you.
+
+### Next: Week 4
+React dashboard: lead inbox and detail, take over / release, manual messages
+through the Send Gate, live notifications, settings pages (qualification,
+post/ad links).

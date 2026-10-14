@@ -1,0 +1,542 @@
+TECHNICAL IMPLEMENTATION SPECIFICATION
+AI-Driven Multi-Agent Lead Generation & Sales Automation System
+==================================================================
+Revision 2 - 14 October 2026
+(Companion document to: project_proposal_ai_lead_gen_agent.txt)
+
+
+REVISION NOTES (what changed from Revision 1)
+----------------------------------------------
+- Database (SQLite -> Postgres) is now the system of record; Google Sheets
+  becomes a read-only mirror.
+- Added Instagram/Messenger DM webhook (the comment-to-lead flow had no
+  channel for the lead's reply).
+- Added webhook security and reliability rules: signature verification,
+  immediate acknowledgement, background processing, de-duplication,
+  delivery-status handling.
+- Added Router (deterministic) and Send Gate (consent, windows, cost,
+  takeover lock, guardrails) as explicit components.
+- Data schema extended: consent, attribution IDs, messaging-window
+  timestamps, conversation state, takeover flag, per-message cost.
+- New sections: Messaging Rules Reference (Section 9), AI Quality &
+  Guardrails (Section 10), Security & Reliability (Section 11).
+- Build plan re-sequenced: platform approvals and error handling moved to
+  the start; evaluation harness added.
+- Multi-tenant section marked as a later phase and corrected for
+  WhatsApp onboarding (Embedded Signup / Tech Provider) and Meta token
+  behaviour.
+
+
+1. TECH STACK SUMMARY
+--------------------------
+Backend:               FastAPI (Python)
+Background work:       FastAPI BackgroundTasks or a lightweight queue
+                       (e.g. arq/RQ on Redis, or a DB-backed job table)
+Frontend:              React (Vite) + Tailwind CSS + shadcn/ui (or Ant Design)
+Data fetching:         TanStack Query (React Query)
+Real-time updates:     WebSocket (FastAPI native)
+LLM (prototype):       Ollama local model, chosen by evaluation (Llama 3.x /
+                       Qwen / Gemma candidates); JSON-schema structured output
+Embeddings:            Multilingual local model (e.g. bge-m3); compare with
+                       nomic-embed-text on the evaluation set
+Vector store:          ChromaDB, or pgvector in the main database
+Database:              SQLite (prototype) -> Postgres
+Sheets mirror:         Google Sheets API (read-only view for salesperson)
+Scheduler:             APScheduler
+Alerts:                SMTP email and/or Telegram Bot API
+Local webhook tunnel:  ngrok with a static domain (free tier provides one)
+Hosting (prototype):   One always-on machine running backend + Ollama.
+                       Do not use free tiers that sleep when idle.
+Auth:                  JWT-based auth (FastAPI, single-user to start)
+Secrets:               .env file / environment variables (never hardcoded,
+                       never committed)
+Logging:               Structured JSON logs with a per-lead trace ID;
+                       personal data masked
+
+
+2. SYSTEM COMPONENTS & RESPONSIBILITIES
+--------------------------------------------
+- Webhook layer: verifies Meta signatures, stores the raw event, returns
+  200 immediately, enqueues processing, drops duplicates.
+- Router: deterministic dispatch by event type to the right agent. No LLM.
+- Specialist agents (Capture, Engage, Qualify, Nurture): Python modules in
+  the backend for the prototype; clean interfaces (Section 3.3) so they
+  can become separate services later.
+- Send Gate: the only code path allowed to send outbound messages. Checks
+  consent, messaging windows, takeover lock and guardrails; picks
+  free-form vs template; records estimated cost.
+- RAG pipeline: hybrid retrieval over the product catalog.
+- Database: source of truth for leads, conversations, consent, state,
+  processed events and message costs.
+- Sheets sync worker: pushes lead-table changes to Google Sheets
+  (batched, to stay within API rate limits).
+- Meta feedback worker (stretch): sends lead stage changes to Conversions
+  API for CRM.
+- React frontend: salesperson dashboard (lead inbox, lead detail with
+  takeover, catalog, analytics, settings).
+- Evaluation harness: replays a labelled set of real messages through the
+  agents and reports accuracy; run before every model/prompt change.
+
+
+3. BACKEND API CONTRACT (FastAPI endpoints)
+--------------------------------------------------
+
+3.1 Inbound webhooks (Meta -> our backend)
+
+  Rules for EVERY webhook endpoint:
+    - Verify the X-Hub-Signature-256 header (HMAC-SHA256 of the raw body
+      with the app secret). Reject on mismatch.
+    - Persist the raw event, return HTTP 200 within a few seconds, and
+      process in the background. Never call the LLM inside the request.
+    - De-duplicate using the event/message ID (Meta retries deliveries).
+    - Each POST endpoint has a matching GET for Meta's verification
+      handshake (hub.mode / hub.verify_token / hub.challenge).
+
+  POST /webhooks/meta/lead-form
+      - Receives Meta Lead Ads notifications (leadgen field). The payload
+        contains a leadgen_id; the backend fetches the actual form fields
+        via the Graph API (requires leads_retrieval permission).
+      - Triggers: Capture Agent -> Send Gate (approved template, only if
+        WhatsApp opt-in was given on the form)
+
+  POST /webhooks/meta/comments
+      - Receives new comment events (Instagram/Facebook)
+      - Triggers: Engage Agent (intent classification -> single private
+        reply -> optional public reply / hide spam)
+
+  POST /webhooks/meta/messages          (NEW)
+      - Receives Instagram Direct and Messenger messages, including replies
+        to private replies
+      - Triggers: Engage Agent / Qualify Agent (conversation continues in
+        the 24-hour Instagram/Messenger window)
+
+  POST /webhooks/whatsapp/messages
+      - Receives inbound WhatsApp messages AND message status updates
+        (sent / delivered / read / failed)
+      - For messages from Click-to-WhatsApp ads, parses the referral object
+        (ad/source ID, ctwa_clid) and opens the free entry window record
+      - Triggers: Capture Agent (new contact) -> Qualify Agent, or Nurture
+        Agent exit (if lead was in a follow-up sequence)
+      - Status "failed" updates the message log and surfaces on the
+        dashboard
+
+  GET  (verification handshake) for each path above
+
+
+3.2 Frontend-facing API (dashboard -> backend)
+  GET  /api/leads
+      - Lead list, filterable by status (hot/warm/cold/contacted/
+        converted/lost), source and channel
+      - Pagination and sort (by score, by recency)
+
+  GET  /api/leads/{lead_id}
+      - Full lead detail: contact info, source and ad attribution, consent
+        record, full conversation history across channels, score + scoring
+        rationale, open messaging windows, messaging cost to date
+
+  PATCH /api/leads/{lead_id}
+      - Update lead status manually (Contacted / Converted / Lost). Status
+        changes are queued for the Meta feedback worker (stretch).
+
+  POST /api/leads/{lead_id}/takeover
+      - Salesperson takes over; sets is_human_takeover = true. The Send
+        Gate blocks all automated sends to this lead until released.
+
+  POST /api/leads/{lead_id}/release
+      - Returns the conversation to agent control
+
+  POST /api/leads/{lead_id}/message
+      - Salesperson sends a manual message (goes through the Send Gate,
+        which tells the UI whether free-form is allowed or a template is
+        required)
+
+  DELETE /api/leads/{lead_id}/personal-data
+      - Erases a lead's personal data on request (keeps an anonymised row
+        for analytics)
+
+  GET  /api/products
+  POST /api/products
+  PATCH /api/products/{product_id}
+  DELETE /api/products/{product_id}
+      - CRUD for the product catalog feeding the RAG pipeline
+      - On create/update, backend re-embeds the affected product only
+
+  GET  /api/templates
+      - Lists WhatsApp templates and their Meta approval status
+
+  GET  /api/settings/qualification
+  PUT  /api/settings/qualification
+      - Qualifying questions, scoring weights and hot/warm/cold thresholds
+        (business config, not code)
+
+  GET /api/analytics/summary
+      - Leads captured (today/week), conversion rate, median response
+        time, lead source breakdown, reply rate
+
+  GET /api/analytics/costs
+      - Estimated messaging cost by day, channel, category and per
+        qualified lead
+
+  WS /ws/notifications
+      - Real-time "new hot lead", "lead replied", "handoff requested",
+        "message failed" alerts
+
+
+3.3 Internal interfaces (function signatures, prototype)
+  router.dispatch(event: InboundEvent) -> None
+  capture_agent.normalize_lead(raw_event: dict, source: str) -> LeadRecord
+  engage_agent.handle_comment(comment: CommentEvent) -> AgentAction
+  engage_agent.handle_dm(lead_id: str, message: InboundMessage) -> AgentAction
+  qualify_agent.process_message(lead_id: str, message: InboundMessage)
+      -> QualifyResult          # includes extracted slots + reply draft
+  scoring.score(slots: QualifySlots, config: ScoringConfig)
+      -> ScoreResult            # pure function, no LLM
+  nurture_agent.run_daily_check() -> list[LeadRecord]   (scheduled job)
+  rag_pipeline.get_product_context(query: str, top_k: int = 3,
+      filters: dict | None = None) -> list[ProductRecord]
+  guardrails.validate_reply(text: str, products: list[ProductRecord])
+      -> ValidationResult       # prices/stock/offers must match catalog
+  send_gate.send(lead_id: str, channel: str, content: OutboundContent)
+      -> SendResult             # sent / needs_template / blocked + reason
+  alerts.notify_salesperson(lead_id: str, reason: str) -> None
+  sheets_sync.push(lead_ids: list[str]) -> None
+  meta_feedback.report_stage(lead_id: str, stage: str) -> None  (stretch)
+
+  These boundaries are what allow splitting into separate services later
+  without changing how other components call them. Only send_gate.send
+  may call the WhatsApp or Meta send APIs.
+
+
+4. DATA SCHEMA
+--------------------
+The database is the system of record. Every table carries user_id from day
+one (single value in the prototype) so multi-tenancy later needs no
+migration of existing rows.
+
+4.1 leads (mirrored to Google Sheets; maps onto future CRM fields)
+  lead_id                 - unique identifier (UUID)
+  user_id                 - business/tenant identifier
+  name                    - lead's name
+  contact_phone           - WhatsApp-reachable number (E.164 format)
+  contact_email           - optional
+  instagram_scoped_id     - for Instagram/Messenger leads
+  preferred_channel       - whatsapp | instagram | messenger
+  language                - detected language of the lead's messages
+  source                  - ctwa_ad | ad_form | comment | dm | website_chat
+  source_detail           - free text for traceability
+  meta_lead_id            - Lead Ads leadgen ID (needed for Meta feedback)
+  ad_id                   - ad that produced the lead
+  campaign_id             - campaign that produced the lead
+  ctwa_clid               - Click-to-WhatsApp click ID, if any
+  product_interest        - product name or category
+  qualify_state           - current step in the qualify flow
+  qualify_slots           - JSON: budget, timeline, product, quantity, ...
+  qualification_score     - numeric score
+  score_rationale         - short explanation of the score
+  status                  - new | hot | warm | cold | contacted | converted
+                            | lost
+  assigned_to             - salesperson identifier
+  is_human_takeover       - boolean; blocks automated sends when true
+  conversation_summary    - short LLM-generated summary
+  whatsapp_opt_in         - boolean
+  opt_in_source           - lead_form | ctwa_message | dm | manual
+  opt_in_at               - timestamp
+  opted_out               - boolean; checked by the Send Gate before any
+                            send
+  opted_out_at            - timestamp
+  last_inbound_at         - timestamp of the lead's latest message
+  service_window_expires_at     - last_inbound_at + 24h (WhatsApp)
+  free_entry_window_expires_at  - 72h free entry window end, if open
+  nurture_step            - position in the follow-up sequence
+  nurture_next_at         - when the next follow-up is due
+  messaging_cost_estimate - running total, in INR
+  created_at              - timestamp of first contact
+  last_activity_at        - timestamp of most recent message either way
+
+4.2 products (feeds the vector store)
+  product_id, user_id, name, category, price, currency, description,
+  key_attributes (JSON: size, colour, material, ...), stock_status,
+  source_url (if scraped/API-sourced), last_updated
+
+4.3 messages (conversation log, one row per message, all channels)
+  message_id, user_id, lead_id, channel (whatsapp | instagram |
+  messenger), direction (inbound | outbound), sender (agent | lead |
+  salesperson), text, media_type (none | image | audio | ...),
+  platform_message_id, template_name (if a template), pricing_category
+  (marketing | utility | service | free_entry | free), delivery_status
+  (sent | delivered | read | failed), estimated_cost, timestamp
+
+4.4 consent_events (audit trail)
+  event_id, user_id, lead_id, type (opt_in | opt_out), channel, source,
+  wording_shown, timestamp
+
+4.5 processed_events (webhook idempotency)
+  platform_event_id (unique), user_id, endpoint, received_at,
+  processed_at, status, error
+
+4.6 Google Sheets mirror
+  One row per lead with a subset of 4.1 (no tokens, no full conversation
+  text). Written by the sync worker in batches; never read back as truth.
+
+
+5. WEEK-BY-WEEK BUILD CHECKLIST
+------------------------------------
+
+Day 1 (parallel track, do not wait for code)
+  - Meta Business Verification started; Meta Developer App created
+  - WhatsApp Business number registered; display name submitted
+  - Templates submitted: lead-form first message, 2-3 nurture follow-ups
+    (with opt-out button)
+  - Lead form opt-in wording agreed and added
+  - Baseline metrics captured (current response time, reply rate,
+    lead-to-sale rate)
+  - Start collecting 50-100 real past comments/messages for the evaluation
+    set
+
+Week 1 - Foundations
+  - FastAPI scaffold + JWT auth
+  - Database schema (Section 4) with migrations
+  - Webhook layer: signature verification, raw event storage, immediate
+    200, background processing, de-duplication
+  - Structured logging with trace IDs; error handling and retry policy
+  - Ollama running with JSON-schema structured output
+  - ngrok static domain; always-on host decided
+  - Starter product catalog file
+
+Week 2 - RAG + CTWA + lead form
+  - Embedding model chosen using a first slice of the evaluation set
+  - Product data embedded; hybrid retrieval working
+  - Guardrails: price/stock insertion and validation
+  - Send Gate: consent, windows, takeover lock, cost logging
+  - CTWA ad message -> Capture Agent -> instant RAG reply
+  - Lead form webhook -> Graph API fetch -> Capture Agent -> template send
+  - WhatsApp status webhooks updating message log
+
+Week 3 - Comments, DMs, Qualify, alerts
+  - Comment webhook -> intent classification -> single private reply
+  - Instagram/Messenger DM webhook -> conversation continues
+  - Qualify Agent: structured slot extraction + scoring rubric in code
+  - Handoff triggers (human requested, complaint, voice note, low
+    confidence)
+  - Hot-lead alert via email/Telegram
+  - Sheets sync worker
+
+Week 4 - Dashboard (frontend)
+  - React + Vite + Tailwind scaffold
+  - Lead inbox (GET /api/leads) and lead detail (GET /api/leads/{id})
+  - Manual status update, takeover/release, manual message via Send Gate
+  - WebSocket notifications
+  - Qualification settings page
+
+Week 5 - Nurture, analytics, evaluation
+  - APScheduler nurture job: opted-in leads only, capped follow-ups
+  - Opt-out handling verified across channels and languages
+  - Analytics summary + cost endpoints and dashboard tab
+  - Full evaluation harness run; fix prompts/model choice against targets
+  - Stretch: Meta feedback worker (Conversions API for CRM)
+
+Week 6 - Buffer / stakeholder demo prep
+  - End-to-end tests: one full lifecycle per entry path (CTWA, lead form,
+    comment), ad to converted/lost
+  - Failure tests: duplicate webhooks, LLM down, send failure, expired
+    window, opted-out lead
+  - Live demo using test ad + test comment scenario
+  - Document known limitations, measured costs and next-phase plan
+
+
+6. NOTES ON PRODUCTION MIGRATION (kept in sync with proposal Section 6)
+----------------------------------------------------------------------------
+- Agent and Send Gate boundaries (Section 3.3) become service boundaries;
+  the background queue becomes a message queue between them.
+- SQLite -> Postgres is a connection-string change if the ORM is used
+  consistently; pgvector can then replace ChromaDB.
+- The Sheets mirror is replaced by a CRM sync using the same lead fields
+  (Section 4.1).
+- Swapping Ollama for a hosted LLM only changes the generation call inside
+  each agent; retrieval, routing, scoring and Send Gate stay as-is.
+  Sending customer data to a hosted LLM must be covered in the privacy
+  notice.
+- The frontend API contract (Section 3.2) does not change when the backend
+  scales to multiple services.
+
+
+7. OPEN ITEMS REQUIRING STAKEHOLDER INPUT (before Week 1 starts)
+----------------------------------------------------------------------
+- Single business or future product for other businesses (affects Section
+  8 timing)
+- Qualifying questions, scoring weights and hot/warm/cold thresholds
+- Product catalog source (manual file now; website/Shopify method TBD)
+- WhatsApp Business number and Meta Business Account availability
+- Customer languages and frequency of voice notes
+- Expected lead volume and monthly messaging budget
+- Hardware or VM budget for running Ollama (affects model size and
+  latency)
+- Opt-in wording and privacy notice text
+
+
+8. MULTI-TENANT USER CONNECTIONS & CREDENTIALS (LATER PHASE)
+----------------------------------------------------------------
+Status: deferred until the stakeholder decides to offer the system to other
+businesses. What IS done now: user_id on every table (Section 4) and all
+queries filtered by it, plus encrypted token storage. Everything else in
+this section is design guidance for that later phase.
+
+8.1 What a user profile consists of
+  A profile is a bundle of connections the agent acts through:
+    - Account identity: email, hashed password (or "Login with Google"),
+      business name, product category
+    - Meta connection: Facebook Page ID, linked Instagram professional
+      account ID, Page access token, Ad Account ID (for analytics and the
+      Meta feedback loop)
+    - WhatsApp connection: WhatsApp Business Account ID (WABA ID), Phone
+      Number ID, business integration token
+    - Google Sheets connection (if the mirror is kept): OAuth token scoped
+      to the user's own spreadsheet, plus the Sheet ID (later: CRM API
+      credentials)
+    - Product catalog source: Shopify domain + token, WooCommerce URL +
+      key/secret, or a manually uploaded file
+    - Business config (per-user data, not credentials): qualifying
+      questions, scoring weights, alert targets, template names, languages
+
+8.2 Connection flows (no manual key entry where avoidable)
+  Users should never paste raw API keys. Each platform is connected through
+  its own authorization flow and the token goes straight to the backend.
+
+    Connect Instagram/Facebook:
+      User clicks "Connect" -> Meta login dialog -> user grants requested
+      permissions -> backend exchanges the code for tokens -> tokens are
+      encrypted and stored against user_id.
+      Serving other businesses requires Meta App Review and Advanced Access
+      for each permission used (e.g. comment management, messaging, lead
+      retrieval, ads read).
+
+    Connect WhatsApp:
+      Onboarding another business's WhatsApp account is done through
+      Meta's Embedded Signup flow, which requires the app owner to be an
+      approved Meta Tech Provider (or to work through a BSP). It is NOT
+      covered by the Instagram/Facebook login grant. Embedded Signup
+      returns the WABA ID and phone number ID and lets the business create
+      or migrate its number. If a BSP (Wati/Gupshup/Twilio) is used
+      instead, follow that BSP's partner onboarding.
+
+    Connect Google Sheets:
+      Google OAuth consent screen -> access + refresh token -> backend
+      creates or links a Sheet in the user's own Google account.
+
+    Connect product catalog:
+      Shopify supports OAuth app installation. WooCommerce usually needs a
+      key/secret generated in WordPress admin - the one place manual entry
+      may be unavoidable; validate it immediately on entry.
+
+8.3 Data model
+    users          (user_id, email, password_hash, business_name,
+                    product_category, created_at)
+    connections    (connection_id, user_id, platform, encrypted_token,
+                    encrypted_refresh_token, external_account_id, scopes,
+                    status, expires_at, last_checked_at, connected_at)
+    leads, products, messages, consent_events, processed_events
+                   (as Section 4, all with user_id)
+
+  Every read and write is filtered by the logged-in user's user_id;
+  enforce this in one data-access layer (or Postgres row-level security),
+  not in each endpoint.
+
+8.4 Security requirements
+  - Encrypt every stored token at rest (KMS-backed secret store or
+    application-level encryption with the key outside the database).
+  - Token lifetime handling (verify against current Meta/Google docs):
+      * Google: refresh automatically with the stored refresh token.
+      * Meta: long-lived user tokens last about 60 days; Page tokens
+        derived from them generally do not expire on a timer but are
+        invalidated by password changes, permission removal or role
+        changes. WhatsApp business integration tokens from Embedded
+        Signup are long-lived. A background job should test each
+        connection daily and flag failures.
+  - Handle revocation: if a user disconnects from Meta's or Google's side,
+    the Connections page shows "Disconnected - reconnect" and new leads
+    for that user raise a dashboard alert instead of failing silently.
+  - Request the narrowest permissions possible; this also helps pass App
+    Review.
+
+8.5 Dashboard surface (Connections settings page)
+  One row per platform: Connected / Not Connected / Needs Reconnection,
+  last successful check time, and a Connect/Reconnect button. This is the
+  self-service onboarding path for each new business.
+
+
+9. MESSAGING RULES REFERENCE (as of October 2026 - re-check Meta docs)
+------------------------------------------------------------------------
+The Send Gate implements this table.
+
+WhatsApp
+  Situation                                   Can send            Charged?
+  -----------------------------------------------------------------------
+  Lead messaged within last 24h               Free-form or        Yes, per
+  (customer service window open)              template            message*
+  Lead arrived via CTWA ad, business replied  Any (free-form      No
+  within 24h (72h free entry window open)     needs 24h window;
+                                              else template)
+  No open window                              Template only       Yes
+  Marketing template outside free entry       -                   Always
+  window
+
+  * Since 1 October 2026: service (free-form) replies and utility
+    templates inside the 24-hour window are charged per message. Some
+    providers report a monthly free allowance per number - confirm.
+
+  Rules:
+  - Templates must be pre-approved and need recorded opt-in.
+  - Reply to CTWA messages within 24 hours, or the free entry window is
+    lost.
+  - Prefer one information-dense message over several short ones.
+
+Instagram / Facebook
+  - Comment: one private reply per comment, within 7 days of the comment
+    (Instagram Live: only during the broadcast).
+  - After the person messages the business: free-form replies within 24
+    hours. Human-agent replies beyond 24 hours (up to 7 days) need the
+    human agent tag and the related permission.
+  - No per-message fee.
+
+
+10. AI QUALITY & GUARDRAILS
+-------------------------------
+- Structured outputs: every classification/extraction call uses a JSON
+  schema; temperature 0; invalid JSON is retried once, then handed off.
+- Prices, stock and offers: inserted from the product record by code.
+  guardrails.validate_reply() rejects replies containing numbers or
+  claims not in the retrieved records.
+- Scope: system prompt restricts the agent to the business's products,
+  orders and policies; unrelated requests get a polite decline.
+- Prompt injection: customer text is placed in clearly delimited user
+  content, never concatenated into instructions; agents cannot trigger
+  sends, status changes or deletions based solely on customer text.
+- Handoff triggers: human requested, complaint/negative sentiment, voice
+  note or unreadable media, repeated misunderstanding, low extraction
+  confidence. Handoff sets is_human_takeover and alerts the salesperson.
+- Language: reply in the lead's language where the model is reliable;
+  otherwise reply in English and flag for review.
+- Evaluation set: 50-100 real labelled messages (intent, expected product,
+  expected handoff). Run the harness on every model or prompt change.
+  Targets are in proposal Section 9.
+- Every LLM call is logged (prompt version, model, latency, output) for
+  debugging, with personal data masked.
+
+
+11. SECURITY & RELIABILITY
+------------------------------
+- Webhook signature verification on every request (Section 3.1).
+- Idempotency via processed_events; outbound sends carry an idempotency
+  key so a retried job cannot double-send.
+- Retry with backoff for Meta/WhatsApp/Sheets API calls; respect rate
+  limits (Sheets writes are batched).
+- LLM unavailable or slow: send a short holding reply through the Send
+  Gate (where a window allows) and alert the salesperson; never leave a
+  new lead unanswered.
+- Secrets only in environment variables or a secret store; app secret and
+  tokens never logged.
+- Daily database backup; tested restore.
+- Personal data masked in logs; Sheets mirror shared only with named
+  salesperson accounts.
+- Data erasure endpoint (Section 3.2) and retention period agreed with the
+  stakeholder.

@@ -1,0 +1,28 @@
+{"query": "price of air fryer", "expected": ["AF-4L-DIG", "AF-6L-WIN"], "lang": "en"}
+{"query": "6 litre air fryer with window", "expected": ["AF-6L-WIN"], "lang": "en"}
+{"query": "mixer grinder 1000 watt", "expected": ["MG-1000-4J"], "lang": "en"}
+{"query": "something to make juice and grind masala", "expected": ["MG-1000-4J", "MG-750-3J"], "lang": "en"}
+{"query": "RO UV water purifier", "expected": ["WP-RO-UV-8L"], "lang": "en"}
+{"query": "steel electric kettle", "expected": ["EK-1.8-SS"], "lang": "en"}
+{"query": "induction stove for cooking", "expected": ["IC-2000-TCH"], "lang": "en"}
+{"query": "hand blender for soups and shakes", "expected": ["HB-400-SET"], "lang": "en"}
+{"query": "cheap appliance for boiling water", "expected": ["EK-1.8-SS"], "lang": "en"}
+{"query": "cook with less oil", "expected": ["AF-4L-DIG", "AF-6L-WIN"], "lang": "en"}
+{"query": "air fryer ka price kya hai", "expected": ["AF-4L-DIG", "AF-6L-WIN"], "lang": "hinglish"}
+{"query": "mixie chahiye 3 jar wala", "expected": ["MG-750-3J"], "lang": "hinglish"}
+{"query": "paani saaf karne wala purifier", "expected": ["WP-RO-UV-8L"], "lang": "hinglish"}
+{"query": "chai ke liye kettle", "expected": ["EK-1.8-SS"], "lang": "hinglish"}
+{"query": "induction chulha kitne ka hai", "expected": ["IC-2000-TCH"], "lang": "hinglish"}
+{"query": "bada air fryer family ke liye", "expected": ["AF-6L-WIN"], "lang": "hinglish"}
+{"query": "air fryer evlo price", "expected": ["AF-4L-DIG", "AF-6L-WIN"], "lang": "tanglish"}
+{"query": "mixie venum 4 jar", "expected": ["MG-1000-4J"], "lang": "tanglish"}
+{"query": "water purifier irukka", "expected": ["WP-RO-UV-8L"], "lang": "tanglish"}
+{"query": "kettle rate enna", "expected": ["EK-1.8-SS"], "lang": "tanglish"}
+{"query": "एयर फ्रायर की कीमत क्या है", "expected": ["AF-4L-DIG", "AF-6L-WIN"], "lang": "hi"}
+{"query": "मिक्सर ग्राइंडर चाहिए", "expected": ["MG-1000-4J", "MG-750-3J"], "lang": "hi"}
+{"query": "पानी साफ करने की मशीन", "expected": ["WP-RO-UV-8L"], "lang": "hi"}
+{"query": "इंडक्शन चूल्हा", "expected": ["IC-2000-TCH"], "lang": "hi"}
+{"query": "ஏர் ஃபிரையர் விலை என்ன", "expected": ["AF-4L-DIG", "AF-6L-WIN"], "lang": "ta"}
+{"query": "மிக்ஸி வேண்டும்", "expected": ["MG-1000-4J", "MG-750-3J"], "lang": "ta"}
+{"query": "தண்ணீர் சுத்திகரிப்பு இயந்திரம்", "expected": ["WP-RO-UV-8L"], "lang": "ta"}
+{"query": "கெட்டில் விலை", "expected": ["EK-1.8-SS"], "lang": "ta"}

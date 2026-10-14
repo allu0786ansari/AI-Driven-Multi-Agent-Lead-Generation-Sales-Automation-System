@@ -72,6 +72,9 @@ class Lead(Base):
     ad_id: Mapped[str | None] = mapped_column(String(64))
     campaign_id: Mapped[str | None] = mapped_column(String(64))
     ctwa_clid: Mapped[str | None] = mapped_column(String(255))
+    # When the lead last messaged us from a Click-to-WhatsApp ad. Replying within
+    # 24h of this opens the 72h free entry window (set by the Send Gate).
+    ctwa_message_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
     # Qualification
     product_interest: Mapped[str | None] = mapped_column(String(255))
@@ -129,12 +132,19 @@ class Product(Base):
 
 
 class Message(Base):
-    """Spec Section 4.3. One row per message on any channel."""
+    """Spec Section 4.3. One row per message on any channel.
+
+    Outbound rows double as the outbox (docs/DECISIONS.md D-009): the Send Gate
+    writes them as `queued` in the same transaction as the agent's other
+    changes; the outbox worker sends them after that transaction commits.
+    """
 
     __tablename__ = "messages"
     __table_args__ = (
         Index(None, "lead_id", "timestamp"),
         Index(None, "platform_message_id"),
+        Index(None, "delivery_status", "next_attempt_at"),
+        UniqueConstraint("idempotency_key"),
     )
 
     message_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -151,6 +161,35 @@ class Message(Base):
     delivery_status: Mapped[str] = mapped_column(String(16), default=DeliveryStatus.PENDING)
     estimated_cost: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=Decimal("0"))
     timestamp: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+    # Outbox fields (outbound only)
+    idempotency_key: Mapped[str | None] = mapped_column(String(255))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # template params, language
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    error: Mapped[str | None] = mapped_column(Text)
+
+
+class ProductEmbedding(Base):
+    """Vector for one product, stored in the main database (docs/DECISIONS.md D-007).
+
+    `text_hash` detects when the product's searchable text changed, so only
+    changed products are re-embedded; `model` detects an embedding model switch.
+    """
+
+    __tablename__ = "product_embeddings"
+    __table_args__ = (Index(None, "user_id", "model"),)
+
+    product_id: Mapped[str] = mapped_column(
+        ForeignKey("products.product_id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.user_id"))
+    model: Mapped[str] = mapped_column(String(128))
+    dim: Mapped[int] = mapped_column(Integer)
+    vector: Mapped[list[float]] = mapped_column(JSON)
+    text_hash: Mapped[str] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
 
 class ConsentEvent(Base):
@@ -194,4 +233,5 @@ class InboundEvent(Base):
     next_attempt_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     received_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     processed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
-    error: Mapped[str | None] = mapped_column(Text)
+    error: Mapped[str | None] = mapped_column(Text)  # last failure
+    result_note: Mapped[str | None] = mapped_column(Text)  # what the handler did (shown in /api/events)

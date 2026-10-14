@@ -13,7 +13,7 @@ from app.db.enums import EventStatus, EventType
 from app.db.models import InboundEvent, Lead
 from app.db.session import session_scope
 from app.dev import payloads as p
-from app.router.dispatcher import HandlerResult, dispatch, register, registered_types
+from app.router.dispatcher import HandlerResult, clear_handlers, dispatch, register, registered_types
 from app.worker.processor import Worker, process_pending
 from tests.conftest import signed_post
 
@@ -28,17 +28,19 @@ def _make_due(event_id: str) -> None:
         s.get(InboundEvent, event_id).next_attempt_at = utcnow() - timedelta(seconds=1)
 
 
-def test_no_handlers_registered_in_week1() -> None:
-    assert registered_types() == []
+def test_registered_handlers_week2() -> None:
+    assert registered_types() == ["page.leadgen", "whatsapp.message", "whatsapp.status"]
 
 
 def test_unhandled_event_marked_ignored(client: TestClient) -> None:
-    signed_post(client, "/webhooks/whatsapp", p.whatsapp_text())
+    # Instagram comments get a handler in Week 3.
+    signed_post(client, "/webhooks/meta/instagram", p.instagram_comment())
     assert process_pending() == {"ignored": 1}
     [ev] = _all()
     assert ev.status == EventStatus.IGNORED
     assert ev.attempts == 1
-    assert "no handler" in ev.error
+    assert "no handler" in ev.result_note
+    assert ev.error is None
     assert ev.processed_at is not None
 
 
@@ -56,6 +58,8 @@ def test_echo_always_ignored_even_with_handler(client: TestClient) -> None:
 
 
 def test_handler_success_and_writes_committed(client: TestClient, user) -> None:  # noqa: ANN001
+    clear_handlers()  # replace the real handler with a test one (restored after the test)
+
     @register(EventType.WHATSAPP_MESSAGE)
     def _h(session, event):  # noqa: ANN001, ANN202
         msg = event.payload["message"]
@@ -73,6 +77,7 @@ def test_handler_success_and_writes_committed(client: TestClient, user) -> None:
 
 def test_failing_handler_retries_with_backoff_then_fails(client: TestClient, user) -> None:  # noqa: ANN001
     attempts: list[int] = []
+    clear_handlers()
 
     @register(EventType.WHATSAPP_MESSAGE)
     def _h(session, event):  # noqa: ANN001, ANN202
@@ -136,6 +141,8 @@ def test_dispatch_unknown_type_ignored() -> None:
 def test_register_twice_rejected() -> None:
     import pytest
 
+    clear_handlers()
+
     @register(EventType.PAGE_LEADGEN)
     def _a(session, event):  # noqa: ANN001, ANN202
         return None
@@ -148,7 +155,7 @@ def test_register_twice_rejected() -> None:
 
 
 def test_worker_loop_processes_on_wake(client: TestClient) -> None:
-    signed_post(client, "/webhooks/whatsapp", p.whatsapp_text())
+    signed_post(client, "/webhooks/meta/instagram", p.instagram_comment())
 
     async def run() -> None:
         worker = Worker(poll_seconds=30)  # long poll: only wake() can trigger quickly
@@ -174,7 +181,7 @@ def test_webhook_wakes_running_worker(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(get_settings(), "worker_enabled", True)
     monkeypatch.setattr(get_settings(), "worker_poll_seconds", 30.0)
     with TestClient(create_app()) as c:
-        signed_post(c, "/webhooks/whatsapp", p.whatsapp_text())
+        signed_post(c, "/webhooks/meta/instagram", p.instagram_comment())
         deadline = time.time() + 3
         while time.time() < deadline and _all()[0].status != EventStatus.IGNORED:
             time.sleep(0.05)

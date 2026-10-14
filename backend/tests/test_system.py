@@ -42,7 +42,8 @@ def test_events_api(client: TestClient, auth_headers: dict[str, str]) -> None:
     signed_post(client, "/webhooks/meta/instagram", p.instagram_comment())
     process_pending()
     body = client.get("/api/events", headers=auth_headers).json()
-    assert body["counts_by_status"] == {"ignored": 2}
+    # WhatsApp messages are handled since Week 2; Instagram comments from Week 3.
+    assert body["counts_by_status"] == {"processed": 1, "ignored": 1}
     assert {e["event_type"] for e in body["events"]} == {"whatsapp.message", "instagram.comment"}
     filtered = client.get("/api/events", params={"status": "pending"}, headers=auth_headers).json()
     assert filtered["events"] == []

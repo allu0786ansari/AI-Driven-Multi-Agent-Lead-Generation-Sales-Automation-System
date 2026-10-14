@@ -13,6 +13,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
+from app import handlers as _handlers  # noqa: F401 - registers event handlers with the router
+from app.api.leads import router as leads_router
 from app.api.system import router as system_router
 from app.auth.routes import router as auth_router
 from app.config import get_settings
@@ -33,6 +35,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         log.warning("JWT_SECRET is the default value - set it in backend/.env")
     if settings.meta_app_secret == "change-me-in-env":
         log.warning("META_APP_SECRET is the default value - webhooks from Meta will be rejected")
+    if settings.meta_api_mode == "fake":
+        log.warning("META_API_MODE=fake - messages are recorded locally, nothing is sent to WhatsApp")
 
     worker: Worker | None = None
     if settings.worker_enabled:
@@ -75,6 +79,7 @@ def create_app() -> FastAPI:
 
     app.include_router(system_router)
     app.include_router(auth_router)
+    app.include_router(leads_router)
     app.include_router(webhooks_router)
     return app
 

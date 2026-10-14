@@ -1,8 +1,28 @@
 TECHNICAL IMPLEMENTATION SPECIFICATION
 AI-Driven Multi-Agent Lead Generation & Sales Automation System
 ==================================================================
-Revision 3 - 14 October 2026 (Week 1 build)
+Revision 4 - 14 October 2026 (Week 2 build)
 (Companion document to: project_proposal_ai_lead_gen_agent.txt)
+
+
+REVISION 4 NOTES (changes made during the Week 2 build - see
+docs/DECISIONS.md D-007 to D-014 for the reasons)
+----------------------------------------------------------------
+- Section 1: product vectors are stored in the main database
+  (product_embeddings table) and scored in Python; no separate vector
+  database. Default embedding provider "hashing" (no model needed);
+  Ollama embeddings once a model is chosen with the eval script.
+- Section 2 / 4.3: outbound messages go through a transactional outbox:
+  the Send Gate writes them as "queued" in the agent's transaction, the
+  worker sends them after commit. New statuses queued / sending /
+  received; new sender "system" for holding and confirmation messages.
+- Section 3.2: read-only GET /api/leads, GET /api/leads/{id} brought
+  forward from Week 4; new GET /api/products/search.
+- Section 3.3: send_gate.queue_message() replaces send_gate.send(); RAG
+  and Send Gate functions take the database session.
+- Section 4: leads.ctwa_message_at, outbox columns on messages,
+  inbound_events.result_note, new product_embeddings table (4.7).
+- Section 10: placeholder rules and fallback behaviour written down.
 
 
 REVISION 3 NOTES (changes made during the Week 1 build - see
@@ -55,9 +75,11 @@ Data fetching:         TanStack Query (React Query)
 Real-time updates:     WebSocket (FastAPI native)
 LLM (prototype):       Ollama local model, chosen by evaluation (Llama 3.x /
                        Qwen / Gemma candidates); JSON-schema structured output
-Embeddings:            Multilingual local model (e.g. bge-m3); compare with
-                       nomic-embed-text on the evaluation set
-Vector store:          ChromaDB, or pgvector in the main database
+Embeddings:            "hashing" (built in, no model) by default; a local
+                       Ollama embedding model (e.g. bge-m3, multilingual)
+                       once chosen with scripts/eval_retrieval.py (Rev 4)
+Vector store:          product_embeddings table in the main database,
+                       scored in Python (Rev 4, D-007); pgvector at scale
 Database:              SQLite (prototype) -> Postgres
 Sheets mirror:         Google Sheets API (read-only view for salesperson)
 Scheduler:             APScheduler
@@ -86,8 +108,16 @@ Logging:               Structured JSON logs with a per-lead trace ID;
   can become separate services later.
 - Send Gate: the only code path allowed to send outbound messages. Checks
   consent, messaging windows, takeover lock and guardrails; picks
-  free-form vs template; records estimated cost.
-- RAG pipeline: hybrid retrieval over the product catalog.
+  free-form vs template; records estimated cost. Writes allowed messages
+  to the outbox (messages table, status "queued").
+- Outbox delivery: runs in the worker after each batch of events; sends
+  queued messages via the WhatsApp client, retries transient errors,
+  never re-sends a message whose outcome is unknown (Rev 4, D-009).
+- RAG pipeline: hybrid retrieval over the product catalog (structured
+  filters + vector similarity + keyword overlap). Vectors are refreshed
+  automatically for new/changed products.
+- External clients: WhatsApp Cloud API sender and Meta Graph client (lead
+  fetch), each with a "fake" twin selected by META_API_MODE.
 - Database: source of truth for leads, conversations, consent, state,
   processed events and message costs.
 - Sheets sync worker: pushes lead-table changes to Google Sheets
@@ -197,6 +227,11 @@ Logging:               Structured JSON logs with a per-lead trace ID;
       - Erases a lead's personal data on request (keeps an anonymised row
         for analytics)
 
+  GET  /api/products/search?q=...&top_k=5        (Rev 4)
+      - Runs the same product search the agents use and shows scores
+        (vector, keyword, total) and any budget filter read from the
+        query. For tuning the catalog and choosing the embedding model.
+
   GET  /api/products
   POST /api/products
   PATCH /api/products/{product_id}
@@ -227,7 +262,9 @@ Logging:               Structured JSON logs with a per-lead trace ID;
 
 3.3 Internal interfaces (function signatures, prototype)
   router.dispatch(event: InboundEvent) -> None
-  capture_agent.normalize_lead(raw_event: dict, source: str) -> LeadRecord
+  capture.capture_whatsapp_message(session, user_id, payload) -> CaptureResult
+  capture.capture_lead_form(session, user_id, lead_data) -> CaptureResult
+      # (Rev 4: one function per source instead of normalize_lead)
   engage_agent.handle_comment(comment: CommentEvent) -> AgentAction
   engage_agent.handle_dm(lead_id: str, message: InboundMessage) -> AgentAction
   qualify_agent.process_message(lead_id: str, message: InboundMessage)
@@ -235,19 +272,24 @@ Logging:               Structured JSON logs with a per-lead trace ID;
   scoring.score(slots: QualifySlots, config: ScoringConfig)
       -> ScoreResult            # pure function, no LLM
   nurture_agent.run_daily_check() -> list[LeadRecord]   (scheduled job)
-  rag_pipeline.get_product_context(query: str, top_k: int = 3,
-      filters: dict | None = None) -> list[ProductRecord]
-  guardrails.validate_reply(text: str, products: list[ProductRecord])
-      -> ValidationResult       # prices/stock/offers must match catalog
-  send_gate.send(lead_id: str, channel: str, content: OutboundContent)
-      -> SendResult             # sent / needs_template / blocked + reason
+  rag.get_product_context(session, user_id, query, top_k=3,
+      filters: ProductFilters | None = None) -> list[RetrievedProduct]
+  responder.generate_product_reply(session, lead, customer_text)
+      -> ReplyOutcome           # text, source llm|fallback|holding, products
+  guardrails.render_placeholders(text, products) -> (text, unknown_skus)
+  guardrails.validate_reply(text, products, customer_text)
+      -> ValidationResult       # prices/numbers/claims must match catalog
+  send_gate.queue_message(session, lead, content, idempotency_key=...,
+      sender=..., context_products=...) -> SendResult
+                                # queued / needs_template / blocked + reason
+  outbox.deliver_pending() -> counts   # sends queued messages (worker)
   alerts.notify_salesperson(lead_id: str, reason: str) -> None
   sheets_sync.push(lead_ids: list[str]) -> None
   meta_feedback.report_stage(lead_id: str, stage: str) -> None  (stretch)
 
   These boundaries are what allow splitting into separate services later
-  without changing how other components call them. Only send_gate.send
-  may call the WhatsApp or Meta send APIs.
+  without changing how other components call them. Only the outbox (fed
+  exclusively by send_gate.queue_message) may call the WhatsApp or Meta send APIs.
 
 
 4. DATA SCHEMA
@@ -273,6 +315,9 @@ migration of existing rows.
   ad_id                   - ad that produced the lead
   campaign_id             - campaign that produced the lead
   ctwa_clid               - Click-to-WhatsApp click ID, if any
+  ctwa_message_at         - when the lead last wrote from a CTWA ad; a
+                            reply within 24h opens the 72h free entry
+                            window (Rev 4)
   product_interest        - product name or category
   qualify_state           - current step in the qualify flow
   qualify_slots           - JSON: budget, timeline, product, quantity, ...
@@ -309,10 +354,19 @@ migration of existing rows.
 4.3 messages (conversation log, one row per message, all channels)
   message_id, user_id, lead_id, channel (whatsapp | instagram |
   messenger), direction (inbound | outbound), sender (agent | lead |
-  salesperson), text, media_type (none | image | audio | ...),
+  salesperson | system), text, media_type (none | image | audio | ...),
   platform_message_id, template_name (if a template), pricing_category
   (marketing | utility | service | free_entry | free), delivery_status
-  (sent | delivered | read | failed), estimated_cost, timestamp
+  (received for inbound; queued | sending | sent | delivered | read |
+  failed for outbound), estimated_cost, timestamp
+  Outbox fields (Rev 4, D-009): idempotency_key (unique, e.g.
+  "reply:<inbound wamid>", "leadform:<leadgen_id>"), payload (JSON: text
+  or template name/language/params), attempts, next_attempt_at, sent_at,
+  error.
+  - Status webhooks only move a message forward (sent < delivered <
+    read); "failed" always applies. When Meta reports a message as not
+    billable (free entry / free customer service), estimated_cost is set
+    to 0 and the lead's running total is corrected.
 
 4.4 consent_events (audit trail)
   event_id, user_id, lead_id, type (opt_in | opt_out), channel, source,
@@ -324,7 +378,8 @@ migration of existing rows.
   "instagram.comment:<comment_id>"), user_id (null if no business user
   existed yet), endpoint, event_type, payload (JSON), trace_id, status
   (pending | processing | processed | ignored | retry | failed), attempts,
-  next_attempt_at, received_at, processed_at, error
+  next_attempt_at, received_at, processed_at, error, result_note (what
+  the handler did, e.g. "new lead ...: reply llm: queued" - Rev 4)
   - Failed handlers are retried with exponential backoff (5s, 10s, 20s...)
     up to WORKER_MAX_ATTEMPTS, then marked failed.
   - An event stuck in "processing" for 5 minutes (server killed mid-run)
@@ -337,6 +392,17 @@ migration of existing rows.
 4.6 Google Sheets mirror
   One row per lead with a subset of 4.1 (no tokens, no full conversation
   text). Written by the sync worker in batches; never read back as truth.
+
+4.7 product_embeddings (Rev 4, D-007)
+  product_id (PK, deleted with the product), user_id, model (e.g.
+  "hashing-v1-512", "ollama:bge-m3"), dim, vector (JSON list of floats,
+  L2-normalized), text_hash (SHA-256 of the product's searchable text),
+  updated_at.
+  - Only products whose searchable text changed, or that were embedded
+    with a different model, are re-embedded.
+  - Retrieval score = 0.65 x cosine similarity + 0.35 x keyword overlap,
+    after filters (category, min/max price, in-stock only). Results below
+    RAG_MIN_SCORE (0.12) are dropped.
 
 
 5. WEEK-BY-WEEK BUILD CHECKLIST
@@ -409,7 +475,8 @@ Week 6 - Buffer / stakeholder demo prep
 - Agent and Send Gate boundaries (Section 3.3) become service boundaries;
   the background queue becomes a message queue between them.
 - SQLite -> Postgres is a connection-string change if the ORM is used
-  consistently; pgvector can then replace ChromaDB.
+  consistently; pgvector can then take over vector search from the
+  product_embeddings table (D-007).
 - The Sheets mirror is replaced by a CRM sync using the same lead fields
   (Section 4.1).
 - Swapping Ollama for a hosted LLM only changes the generation call inside
@@ -564,8 +631,25 @@ Instagram / Facebook
 - Structured outputs: every classification/extraction call uses a JSON
   schema; temperature 0; invalid JSON is retried once, then handed off.
 - Prices, stock and offers: inserted from the product record by code.
-  guardrails.validate_reply() rejects replies containing numbers or
-  claims not in the retrieved records.
+  The LLM writes {{price:SKU}}, {{stock:SKU}} and {{name:SKU}}
+  placeholders; render_placeholders() fills them. validate_reply() then
+  checks the final text (Rev 4):
+    * every money amount (Rs / INR / rupees / "/-") equals a catalog price
+      of a product in context
+    * every percentage, and every other number above 12, appears in the
+      product data or in the customer's own message
+    * no discount, special/limited offer, cashback, coupon, EMI, sale,
+      guarantee or free delivery/shipping claim unless the catalog text
+      contains it
+    * no unfilled placeholder
+- Fallback (Rev 4): if the LLM is unreachable, returns invalid output, an
+  empty reply, an unknown SKU or text that fails validation, the reply is
+  built only from catalog data ("Here are the options that match: ...").
+  If no product matches either, a holding message is sent and the lead is
+  handed to a human.
+- Budget filters: "under 5000", "5k tak", "6000 se kam", "budget Rs 3,500"
+  are read from the message and applied before search; if nothing fits
+  the budget, the closest products are shown and the LLM is told so.
 - Scope: system prompt restricts the agent to the business's products,
   orders and policies; unrelated requests get a polite decline.
 - Prompt injection: customer text is placed in clearly delimited user

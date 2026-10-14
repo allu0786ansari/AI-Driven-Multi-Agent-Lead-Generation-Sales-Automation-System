@@ -12,6 +12,7 @@ leads, alerts the salesperson about hot leads, and nurtures inactive ones.
 | [docs/technical_implementation_spec.txt](docs/technical_implementation_spec.txt) | Technical spec: API contract, data schema, build plan |
 | [docs/RUNLOG.md](docs/RUNLOG.md) | Week-by-week build log: what was built, how to run it on Windows, test results |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Every change made during development that differs from the proposal/spec, and why |
+| [docs/meta_setup.md](docs/meta_setup.md) | Meta/WhatsApp setup checklist, webhook settings, template and opt-in drafts |
 
 ## Repository layout
 

@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest>=9.1,<10.0
+ruff>=0.17,<1.0
+# Test client transport (Starlette 1.8+ deprecates plain httpx for TestClient)
+httpx2>=2.13,<3.0

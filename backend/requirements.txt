@@ -1,0 +1,11 @@
+# Runtime dependencies (tested on Python 3.11 - 3.13, Windows and Linux)
+fastapi>=0.143,<1.0
+uvicorn[standard]>=0.54,<1.0
+pydantic>=2.14,<3.0
+pydantic-settings>=2.16,<3.0
+SQLAlchemy>=2.1,<2.2
+alembic>=1.20,<2.0
+PyJWT>=2.15,<3.0
+bcrypt>=5.0,<6.0
+httpx>=0.28,<1.0
+python-multipart>=0.0.32,<0.1

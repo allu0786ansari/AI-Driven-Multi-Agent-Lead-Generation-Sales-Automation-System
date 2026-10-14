@@ -1,11 +1,28 @@
 TECHNICAL IMPLEMENTATION SPECIFICATION
 AI-Driven Multi-Agent Lead Generation & Sales Automation System
 ==================================================================
-Revision 2 - 14 October 2026
+Revision 3 - 14 October 2026 (Week 1 build)
 (Companion document to: project_proposal_ai_lead_gen_agent.txt)
 
 
-REVISION NOTES (what changed from Revision 1)
+REVISION 3 NOTES (changes made during the Week 1 build - see
+docs/DECISIONS.md D-001 to D-006 for the reasons)
+----------------------------------------------------------------
+- Section 3.1: webhook URLs are now one per Meta webhook object
+  (/webhooks/meta/page, /webhooks/meta/instagram, /webhooks/whatsapp),
+  because Meta allows only one callback URL per object. Events are routed
+  by their content, not by URL.
+- Section 1 / 2: background work uses the database itself as the queue
+  (inbound_events table); no Redis needed.
+- Section 4.5: `processed_events` replaced by `inbound_events`, which is
+  both the de-duplication record and the durable work queue.
+- Section 4.1 / 4.2: added leads.messenger_scoped_id and products.sku
+  (stable import key); users table gains is_active.
+- Section 3.2: added GET /api/health and GET /api/events (webhook event
+  inspection).
+
+
+REVISION 2 NOTES (what changed from Revision 1)
 ----------------------------------------------
 - Database (SQLite -> Postgres) is now the system of record; Google Sheets
   becomes a read-only mirror.
@@ -30,8 +47,9 @@ REVISION NOTES (what changed from Revision 1)
 1. TECH STACK SUMMARY
 --------------------------
 Backend:               FastAPI (Python)
-Background work:       FastAPI BackgroundTasks or a lightweight queue
-                       (e.g. arq/RQ on Redis, or a DB-backed job table)
+Background work:       DB-backed queue: the inbound_events table, processed
+                       by an in-process asyncio worker (no Redis; works the
+                       same on Windows and Linux)
 Frontend:              React (Vite) + Tailwind CSS + shadcn/ui (or Ant Design)
 Data fetching:         TanStack Query (React Query)
 Real-time updates:     WebSocket (FastAPI native)
@@ -56,8 +74,12 @@ Logging:               Structured JSON logs with a per-lead trace ID;
 
 2. SYSTEM COMPONENTS & RESPONSIBILITIES
 --------------------------------------------
-- Webhook layer: verifies Meta signatures, stores the raw event, returns
-  200 immediately, enqueues processing, drops duplicates.
+- Webhook layer: verifies Meta signatures, splits the body into events,
+  stores each in inbound_events (dropping duplicates), returns 200
+  immediately and wakes the background worker.
+- Background worker: asyncio loop inside the FastAPI process; claims due
+  events from inbound_events, runs them through the router, retries
+  failures with backoff.
 - Router: deterministic dispatch by event type to the right agent. No LLM.
 - Specialist agents (Capture, Engage, Qualify, Nurture): Python modules in
   the backend for the prototype; clean interfaces (Section 3.3) so they
@@ -91,39 +113,60 @@ Logging:               Structured JSON logs with a per-lead trace ID;
     - De-duplicate using the event/message ID (Meta retries deliveries).
     - Each POST endpoint has a matching GET for Meta's verification
       handshake (hub.mode / hub.verify_token / hub.challenge).
+    - One POST body may contain several events; each is stored as its own
+      inbound_events row with a stable ID (Section 4.5). Recognized but
+      irrelevant items (reactions, read receipts, edits) are skipped;
+      unrecognized items are stored as "unknown" so nothing is lost.
 
-  POST /webhooks/meta/lead-form
-      - Receives Meta Lead Ads notifications (leadgen field). The payload
-        contains a leadgen_id; the backend fetches the actual form fields
-        via the Graph API (requires leads_retrieval permission).
-      - Triggers: Capture Agent -> Send Gate (approved template, only if
-        WhatsApp opt-in was given on the form)
+  URLs are one per Meta webhook object (Rev 3, D-001): Meta lets an app set
+  only one callback URL per object type, so lead forms, Facebook comments
+  and Messenger messages all arrive at the same Page URL.
 
-  POST /webhooks/meta/comments
-      - Receives new comment events (Instagram/Facebook)
-      - Triggers: Engage Agent (intent classification -> single private
-        reply -> optional public reply / hide spam)
+  POST /webhooks/meta/page          (Meta object: Page)
+      Subscribe to fields: leadgen, feed, messages
+      - leadgen -> event page.leadgen. The payload contains a leadgen_id;
+        the backend fetches the form fields via the Graph API (requires
+        leads_retrieval permission). Triggers: Capture Agent -> Send Gate
+        (approved template, only if WhatsApp opt-in was given on the form)
+      - feed (comment added) -> event page.comment. Triggers: Engage Agent
+        (intent classification -> single private reply -> optional public
+        reply / hide spam)
+      - messages -> event page.message (Messenger); our own sent messages
+        come back as page.message_echo and are ignored
 
-  POST /webhooks/meta/messages          (NEW)
-      - Receives Instagram Direct and Messenger messages, including replies
-        to private replies
-      - Triggers: Engage Agent / Qualify Agent (conversation continues in
-        the 24-hour Instagram/Messenger window)
+  POST /webhooks/meta/instagram     (Meta object: Instagram)
+      Subscribe to fields: comments, live_comments, messages
+      - comments / live_comments -> event instagram.comment (Engage Agent)
+      - messages -> event instagram.message, including replies to private
+        replies (Engage / Qualify Agent, 24-hour window); echoes ignored
 
-  POST /webhooks/whatsapp/messages
-      - Receives inbound WhatsApp messages AND message status updates
-        (sent / delivered / read / failed)
-      - For messages from Click-to-WhatsApp ads, parses the referral object
-        (ad/source ID, ctwa_clid) and opens the free entry window record
-      - Triggers: Capture Agent (new contact) -> Qualify Agent, or Nurture
-        Agent exit (if lead was in a follow-up sequence)
-      - Status "failed" updates the message log and surfaces on the
-        dashboard
+  POST /webhooks/whatsapp           (Meta object: WhatsApp Business Account)
+      Subscribe to field: messages
+      - Inbound messages -> event whatsapp.message. For messages from
+        Click-to-WhatsApp ads, the referral object (ad/source ID,
+        ctwa_clid) opens the free entry window record. Triggers: Capture
+        Agent (new contact) -> Qualify Agent, or Nurture Agent exit
+      - Status updates (sent / delivered / read / failed) -> event
+        whatsapp.status, one event per step; "failed" updates the message
+        log and surfaces on the dashboard
 
   GET  (verification handshake) for each path above
 
 
 3.2 Frontend-facing API (dashboard -> backend)
+  POST /api/auth/login
+      - OAuth2 password form (username = email, password) -> JWT
+  GET  /api/auth/me
+      - The logged-in business account
+
+  GET  /api/health                       (no auth; ?deep=true checks LLM)
+      - Database status, LLM provider, registered event handlers
+
+  GET  /api/events                       (Rev 3)
+      - Recent webhook events with status (pending / processed / ignored /
+        retry / failed), attempts and error; counts by status. Used to
+        check that Meta deliveries arrive and are handled.
+
   GET  /api/leads
       - Lead list, filterable by status (hot/warm/cold/contacted/
         converted/lost), source and channel
@@ -219,7 +262,9 @@ migration of existing rows.
   name                    - lead's name
   contact_phone           - WhatsApp-reachable number (E.164 format)
   contact_email           - optional
-  instagram_scoped_id     - for Instagram/Messenger leads
+  instagram_scoped_id     - for Instagram leads
+  messenger_scoped_id     - for Messenger leads (Rev 3: Facebook and
+                            Instagram use different scoped IDs)
   preferred_channel       - whatsapp | instagram | messenger
   language                - detected language of the lead's messages
   source                  - ctwa_ad | ad_form | comment | dm | website_chat
@@ -254,9 +299,12 @@ migration of existing rows.
   last_activity_at        - timestamp of most recent message either way
 
 4.2 products (feeds the vector store)
-  product_id, user_id, name, category, price, currency, description,
-  key_attributes (JSON: size, colour, material, ...), stock_status,
-  source_url (if scraped/API-sourced), last_updated
+  product_id, user_id, sku (business's own product code; unique per
+  business; the key used when re-importing the catalog - Rev 3), name,
+  category, price, currency, description, key_attributes (JSON: size,
+  colour, material, ...), stock_status (in_stock | low_stock |
+  out_of_stock | preorder), source_url (if scraped/API-sourced),
+  last_updated
 
 4.3 messages (conversation log, one row per message, all channels)
   message_id, user_id, lead_id, channel (whatsapp | instagram |
@@ -270,9 +318,21 @@ migration of existing rows.
   event_id, user_id, lead_id, type (opt_in | opt_out), channel, source,
   wording_shown, timestamp
 
-4.5 processed_events (webhook idempotency)
-  platform_event_id (unique), user_id, endpoint, received_at,
-  processed_at, status, error
+4.5 inbound_events (webhook de-duplication AND work queue - Rev 3, D-002)
+  id, platform_event_id (unique, e.g. "whatsapp.message:<wamid>",
+  "whatsapp.status:<wamid>:<status>", "page.leadgen:<leadgen_id>",
+  "instagram.comment:<comment_id>"), user_id (null if no business user
+  existed yet), endpoint, event_type, payload (JSON), trace_id, status
+  (pending | processing | processed | ignored | retry | failed), attempts,
+  next_attempt_at, received_at, processed_at, error
+  - Failed handlers are retried with exponential backoff (5s, 10s, 20s...)
+    up to WORKER_MAX_ATTEMPTS, then marked failed.
+  - An event stuck in "processing" for 5 minutes (server killed mid-run)
+    is picked up again.
+
+4.5a users (from Section 8.3, needed now for login)
+  user_id, email (unique, lower-case), password_hash (bcrypt),
+  business_name, product_category, is_active, created_at
 
 4.6 Google Sheets mirror
   One row per lead with a subset of 4.1 (no tokens, no full conversation
@@ -434,7 +494,7 @@ this section is design guidance for that later phase.
     connections    (connection_id, user_id, platform, encrypted_token,
                     encrypted_refresh_token, external_account_id, scopes,
                     status, expires_at, last_checked_at, connected_at)
-    leads, products, messages, consent_events, processed_events
+    leads, products, messages, consent_events, inbound_events
                    (as Section 4, all with user_id)
 
   Every read and write is filtered by the logged-in user's user_id;
@@ -526,7 +586,7 @@ Instagram / Facebook
 11. SECURITY & RELIABILITY
 ------------------------------
 - Webhook signature verification on every request (Section 3.1).
-- Idempotency via processed_events; outbound sends carry an idempotency
+- Idempotency via inbound_events; outbound sends carry an idempotency
   key so a retried job cannot double-send.
 - Retry with backoff for Meta/WhatsApp/Sheets API calls; respect rate
   limits (Sheets writes are batched).

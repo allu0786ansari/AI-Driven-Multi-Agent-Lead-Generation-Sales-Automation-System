@@ -56,6 +56,17 @@ def content_tokens(text: str) -> list[str]:
     return [t for t in tokenize(text) if t not in _STOPWORDS and (len(t) >= 2 or t.isdigit())]
 
 
+def mentions_product(text: str, product: ProductRecord) -> bool:
+    """True if a word of the message names the product or its category ("fryer", "kettle", "mixer").
+
+    Description words don't count, so "delivery this week?" does not "name" a kettle whose
+    description happens to share a few letters.
+    """
+    names = set(tokenize(f"{product.name} {product.category}"))
+    words = [t for t in content_tokens(text) if len(t) >= 3]
+    return any(t in names or (len(t) >= 4 and any(n.startswith(t[:4]) for n in names)) for t in words)
+
+
 def keyword_score(query_tokens: list[str], product: ProductRecord) -> float:
     """Share of the query's meaningful words found in the product (prefix match for plurals)."""
     if not query_tokens:

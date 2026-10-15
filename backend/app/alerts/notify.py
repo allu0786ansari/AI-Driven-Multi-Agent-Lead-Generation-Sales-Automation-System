@@ -52,7 +52,7 @@ def build_body(lead: Lead, reason: str, last_message: str | None) -> str:
         lines.append(f"Why: {lead.score_rationale}")
     if last_message:
         lines.append(f'Last message: "{last_message[:300]}"')
-    lines.append(f"Open: {get_settings().dashboard_url.rstrip('/')}  (lead {lead.lead_id})")
+    lines.append(f"Open: {get_settings().dashboard_url.rstrip('/')}/leads/{lead.lead_id}")
     return "\n".join(lines)
 
 

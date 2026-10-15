@@ -36,6 +36,22 @@ def test_extract_rules(text: str, expected: dict) -> None:
     assert got == expected
 
 
+@pytest.mark.parametrize(
+    ("text", "quantity"),
+    [
+        ("The 6L one. Need 2, one for my mother", 2),  # found in the Week 4 browser run
+        ("want 3 for the shop", 3),
+        ("need 6L", None),
+        ("want 2 litre one", None),
+        ("need 5000 rs model", None),
+        ("need 1.5L jar", None),
+        ("want 2-3 options", None),
+    ],
+)  # fmt: skip
+def test_quantity_from_need_or_want(text: str, quantity: int | None) -> None:
+    assert extract_rules(text).quantity == quantity
+
+
 def test_merge_newer_wins_and_wants_human_sticks() -> None:
     old = QualifySlots(city="Chennai", budget=Decimal(5000), wants_human=True)
     new = QualifySlots(budget=Decimal(7000), quantity=2)

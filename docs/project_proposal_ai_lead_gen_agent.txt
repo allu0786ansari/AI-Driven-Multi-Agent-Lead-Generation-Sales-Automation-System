@@ -1,8 +1,24 @@
 PROJECT PROPOSAL
 AI-Driven Multi-Agent Lead Generation & Sales Automation System
 ==================================================================
-Revision 4 - 14 October 2026 (updated during the Week 3 build)
+Revision 5 - 15 October 2026 (updated during the Week 4 build)
 (Companion document: technical_implementation_spec.txt)
+
+
+REVISION 5 NOTES (see docs/DECISIONS.md for the reasons)
+---------------------------------------------------------
+- The salesperson dashboard is served by the same server as the webhooks,
+  at one address: nothing extra to host, one ngrok tunnel (D-022).
+- The inbox opens on "Needs you": hot leads and conversations handed to a
+  person. Everything else the assistant is handling (D-023).
+- When the salesperson replies, the dashboard only offers what WhatsApp
+  and Instagram allow at that moment (free text in the 24-hour window, an
+  approved template otherwise) and shows when the window closes. Replying
+  pauses the assistant for that customer automatically (D-024).
+- The dashboard works on a phone, so a salesperson can answer a hot lead
+  away from the desk.
+- Erasing a customer's personal data on request is scheduled for Phase 5,
+  with the opt-out work (D-027).
 
 
 REVISION 4 NOTES (see docs/DECISIONS.md for the reasons)
@@ -270,6 +286,8 @@ Social integration:        Meta Graph API (comments, private replies,
 Messaging:                 WhatsApp Cloud API (see Section 7 for costs)
 Salesperson alerts:        Email (SMTP) and/or Telegram bot, plus dashboard
                            WebSocket push
+Dashboard:                 React web app (works on desktop and phone), served
+                           by the backend; sign-in required (Rev 5)
 Hosting (prototype):       One always-on machine running both the backend
                            and Ollama (a low-cost VM, ideally with a GPU, or
                            a dedicated local machine with a static ngrok
@@ -369,12 +387,16 @@ Phase 3: Qualification + alerts
     alert (email/Telegram/dashboard)
   - Lead table mirrored to Google Sheets
 
-Phase 4: Dashboard + human takeover
+Phase 4: Dashboard + human takeover                 (built, Week 4)
   - Lead inbox, lead detail, takeover/release, live notifications
+  - Replies from the dashboard through the same messaging rules as the
+    assistant; product catalog and qualification settings editable
+    without code
 
 Phase 5: Nurture sequence
   - Scheduled template follow-ups for opted-in inactive leads, with caps
     and opt-out handling
+  - Erase a customer's personal data on request (Rev 5)
 
 Phase 6 (stretch): Ad feedback loop
   - Send qualified/converted stages to Meta via Conversions API for CRM

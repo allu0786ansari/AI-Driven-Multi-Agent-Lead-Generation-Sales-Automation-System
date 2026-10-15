@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     meta_page_access_token: str = ""
     whatsapp_access_token: str = ""
     whatsapp_phone_number_id: str = ""
+    whatsapp_business_account_id: str = ""  # WABA ID: lets the dashboard list approved templates
     meta_api_timeout_seconds: float = 20.0
 
     # Lead form (Instant Form) field names - must match the form built in Ads Manager
@@ -118,7 +119,7 @@ class Settings(BaseSettings):
     # "log" = write alerts to the log and database only; "live" = really send
     alerts_mode: Literal["log", "live"] = "log"
     alert_channels: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["email", "telegram"])
-    dashboard_url: str = "http://127.0.0.1:8000/docs"
+    dashboard_url: str = "http://127.0.0.1:8000"  # links in alerts point here (/leads/<id>)
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""
@@ -129,6 +130,10 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_api_base_url: str = "https://api.telegram.org"
+
+    # ---- Week 4: dashboard ----
+    # Built React app (npm run build in /frontend). Served at / when the folder exists.
+    frontend_dist: str = str(BACKEND_DIR.parent / "frontend" / "dist")
 
     # ---- Week 3: Google Sheets mirror ----
     # "off", "csv" (writes data/leads_mirror.csv - opens in Excel), or "google"
@@ -157,7 +162,7 @@ class Settings(BaseSettings):
                 return prefix + (BACKEND_DIR / path).resolve().as_posix()
         return v
 
-    @field_validator("catalog_path", "sheets_csv_path", "google_service_account_file")
+    @field_validator("catalog_path", "sheets_csv_path", "google_service_account_file", "frontend_dist")
     @classmethod
     def _absolute_file_path(cls, v: str) -> str:
         if not v:

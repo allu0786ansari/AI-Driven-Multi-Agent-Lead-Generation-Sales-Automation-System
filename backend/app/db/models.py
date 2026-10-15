@@ -280,3 +280,22 @@ class Notification(Base):
     read_at: Mapped[datetime | None] = mapped_column(UTCDateTime)  # dashboard (Week 4)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class LeadActivity(Base):
+    """What people (and the system) did to a lead: status changes, takeover, release, manual messages.
+
+    Shown on the lead page; also the record of when a lead was marked converted
+    (for analytics and the Meta feedback loop later).
+    """
+
+    __tablename__ = "lead_activity"
+    __table_args__ = (Index(None, "lead_id", "created_at"),)
+
+    activity_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.user_id"))
+    lead_id: Mapped[str] = mapped_column(ForeignKey("leads.lead_id"))
+    actor: Mapped[str] = mapped_column(String(255))  # salesperson email, or "system"
+    kind: Mapped[str] = mapped_column(String(32))  # status | assign | takeover | release | message
+    detail: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)

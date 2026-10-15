@@ -321,3 +321,19 @@ def test_message_without_product_uses_earlier_interest(client: TestClient, catal
     run_once()
     assert "earlier interest" in _note()
     assert "Air Fryer" in get_meta_messaging().sent[-1]["text"]
+
+
+def test_budget_message_without_product_keeps_earlier_interest(client: TestClient, catalog) -> None:  # noqa: ANN001
+    """Found in the Week 4 run: 'Budget 15000. Coimbatore delivery this week?' was answered with a kettle."""
+    igsid = "IGMEENA"
+    signed_post(client, IG, p.instagram_message("The 6L air fryer. Need 2", igsid=igsid))
+    run_once()
+    signed_post(
+        client,
+        IG,
+        p.instagram_message("Budget 15000. Coimbatore delivery this week? Want to order", igsid=igsid),
+    )
+    run_once()
+    reply = get_meta_messaging().sent[-1]["text"]
+    assert "Air Fryer" in reply.split("\n")[1] and "Kettle" not in reply
+    assert "earlier interest" in _note()

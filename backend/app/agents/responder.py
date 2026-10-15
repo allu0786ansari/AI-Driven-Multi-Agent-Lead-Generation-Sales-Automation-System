@@ -28,7 +28,7 @@ from app.llm.factory import get_llm_client
 from app.qualify.slots import QualifySlots
 from app.rag.query import parse_price_constraints
 from app.rag.records import ProductRecord, format_price
-from app.rag.retrieve import RetrievedProduct, get_product_context
+from app.rag.retrieve import RetrievedProduct, get_product_context, mentions_product
 
 log = logging.getLogger(__name__)
 
@@ -134,16 +134,23 @@ def retrieve_for_message(
 ) -> tuple[list[RetrievedProduct], list[str]]:
     notes: list[str] = []
     filters = parse_price_constraints(text)
-    has_filter = filters.max_price is not None or filters.min_price is not None
-    hits = get_product_context(session, user_id, text, filters=filters if has_filter else None)
-    if has_filter and not hits:
-        hits = get_product_context(session, user_id, text)
+    budget = filters if (filters.max_price is not None or filters.min_price is not None) else None
+
+    candidates = get_product_context(session, user_id, text, top_k=8)
+    named = any(mentions_product(text, h.product) for h in candidates)
+    if not named and previous_interest:
+        # "ok thanks", "budget 15000, delivery this week?" - keep talking about what they asked before
+        # (weak letter matches on other products must not win; found in the Week 4 run).
+        query = previous_interest
+        notes.append(f"message names no product; earlier interest: {previous_interest}")
+    else:
+        query = text
+
+    hits = get_product_context(session, user_id, query, filters=budget)
+    if budget is not None and not hits:
+        hits = get_product_context(session, user_id, query)
         if hits:
             notes.append("nothing within the stated budget; showing closest products")
-    if not hits and previous_interest:
-        # "ok thanks", "when can you deliver?" - keep talking about what they asked before.
-        notes.append(f"message names no product; earlier interest: {previous_interest}")
-        hits = get_product_context(session, user_id, previous_interest)
     return hits, notes
 
 
@@ -199,6 +206,8 @@ def generate_product_reply(
     check = validate_reply(rendered, products, customer_text)
     if unknown or not check.ok or not rendered:
         problems = [f"unknown sku {u}" for u in unknown] + check.problems
+        if not rendered:
+            problems.append("empty reply")
         log.warning("reply failed guardrails, using fallback", extra={"problems": "; ".join(problems)[:300]})
         text = fallback_reply(products, next_question)
         return ReplyOutcome(

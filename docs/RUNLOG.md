@@ -413,3 +413,147 @@ same reason).
 React dashboard: lead inbox and detail, take over / release, manual messages
 through the Send Gate, live notifications, settings pages (qualification,
 post/ad links).
+
+---
+
+## Week 4 - Dashboard (2026-10-15) - branch `week-4`
+
+### What was built
+
+| Area | Files | Notes |
+|---|---|---|
+| Dashboard | `frontend/` | React 19 + Vite + TypeScript + Tailwind 4; sign-in, Leads, Alerts, Products, Settings, Activity; works on a phone |
+| Lead inbox | `frontend/src/pages/Inbox.tsx`, `app/api/leads.py` | Views Needs you / Open / All / Closed with counts, search, channel filter, last message, unread alerts, who is handling it |
+| Lead page | `frontend/src/pages/lead/*` | Conversation across channels with the assistant's, your and automatic messages told apart; score and why; what the customer told us; take over / hand back; mark as Contacted / Bought / Lost; assign |
+| Replying | `app/leads/service.py`, `app/api/leads.py`, `Composer.tsx` | Free text while the window is open, approved template otherwise, nothing if opted out; through the Send Gate; replying takes over automatically; never sent twice |
+| Live updates | `app/api/ws.py`, `frontend/src/lib/live.ts` | `WS /ws/notifications`; new alerts appear as toasts, lists refresh without reloading |
+| Alerts page | `app/api/notifications.py` | All alerts, unread first; opening a lead marks its alerts read |
+| Products | `app/api/products.py`, `Products.tsx` | Add, edit, delete; "Check what the assistant finds" |
+| Settings | `app/api/settings_api.py`, `Settings.tsx` | Questions, score weights, hot/warm thresholds, post/ad links, system health |
+| Templates | `app/api/templates.py` | From Meta when live (needs `WHATSAPP_BUSINESS_ACCOUNT_ID`), from `.env` otherwise |
+| Serving | `app/web.py` | FastAPI serves the built dashboard at `/` (one address for dashboard, API and webhooks) |
+| Database | `alembic/versions/0004_lead_activity.py` | `lead_activity` (status, assign, take over, hand back, manual message) |
+| Demo data | `scripts/simulate.py demo` | 8 customers on all channels: hot Instagram lead, WhatsApp ad lead, voice note, Facebook complaint, Messenger, spam |
+| Docs | spec Rev 6, proposal Rev 5, DECISIONS D-022..D-028 | |
+
+### Test results (sandbox, before publishing)
+
+- `pytest`: **274 passed** on Python 3.13.16 and 3.11.17 (245 from Weeks 1-3 + 29 new).
+  - test_webhooks 35, test_comments_dms 30, test_system 25, test_qualify 24, test_rag 23, test_dashboard_api 21, test_send_gate 18, test_capture 15, test_flows 15, test_guardrails 15, test_worker 11, test_auth 10, test_llm 10, test_alerts_sheets 9, test_catalog 9, test_flows_week3 4
+  - `test_dashboard_api` covers the inbox views and counts, reply options, manual WhatsApp and Instagram messages, template rules, take over / hand back, another business's lead (404), alerts read, product editing, templates from Meta, the WebSocket (including a bad token), and dashboard serving (including attempts to read files outside it).
+- `ruff check` / `ruff format --check`: clean.
+- Dashboard: `npm run typecheck` clean, **30 unit tests passed** (Vitest), production build 367 kB JavaScript (113 kB gzipped).
+- **Browser test** (Playwright, Chromium, 1440x900 and a 390x844 phone), **7 passed** against a server loaded with the demo:
+  wrong password message; inbox puts hot and handed-over leads first; hot Instagram lead: read, take over, reply, hand back, mark as Bought; a WhatsApp "call me" arrives while the inbox is open and appears live with a toast; add a product and the assistant finds it; change the hot threshold and see it saved; phone: inbox, conversation, details, no sideways scrolling.
+- **Migration on real data**: the Week 3 sandbox database (18 leads, 55 messages, 9 alerts, 57 events) upgraded `0003 -> 0004` without loss.
+- **Found by reading the browser screenshots and fixed** (regression tests for each, D-028):
+  1. Meena's budget message ("Budget 15000. Coimbatore delivery this week?") was answered with a kettle.
+  2. "Need 2, one for my mother" was not read as a quantity, so the assistant kept asking how many.
+  3. A reply showed above the voice note it answered (sorting by timestamp text).
+  4. Instagram DM customers showed as "Unnamed customer".
+  5. A lead the assistant handed over said "You're handling this" to everyone.
+  6. Narrow-width layout: the "Mark as" menu stretched to full width and cut the customer's name; toasts covered the Send button.
+  7. `GET /api/events` did not return `result_note`, which earlier run logs refer to.
+
+### Run it on Windows
+
+**1. Get Week 4** (after merging the Week 4 PR, or `git checkout week-4`)
+```powershell
+git checkout main
+git pull
+cd backend
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements-dev.txt     # no new Python packages this week
+```
+
+**2. Install Node.js** (once) - the 24 LTS installer from https://nodejs.org, or
+```powershell
+winget install OpenJS.NodeJS.LTS
+```
+Close and reopen PowerShell, then `node --version` should show v22.12 or newer.
+
+**3. Settings** - copy the `# ---- Week 4 ----` block from `.env.example` to the
+end of your `.env`, and change `DASHBOARD_URL` to `http://127.0.0.1:8000`
+(remove the `/docs` from Week 3) so alert messages link to the lead's page.
+
+**4. Upgrade and test the backend**
+```powershell
+python -m alembic upgrade head      # Running upgrade 0003 -> 0004, lead activity
+python -m pytest                    # 274 passed
+```
+
+**5. Build the dashboard** (again after every update)
+```powershell
+cd ..\frontend
+npm ci                              # first time ~1 minute
+npm test                            # 30 passed
+npm run build                       # writes frontend\dist
+cd ..\backend
+```
+
+**6. Use it**
+```powershell
+python -m uvicorn app.main:app --reload
+# second window (backend folder, venv active):
+python -m scripts.simulate demo
+```
+Open http://127.0.0.1:8000 and sign in with the account you created in Week 1
+(`scripts.create_user`). Try:
+- **Leads → Needs you**: meena.cooks (hot, 100), Rahul Sharma (complaint), Lakshmi R (voice note).
+- Open **meena.cooks**: the score and why on the right; **Take over**, write a reply, **Send**; then **Hand back to assistant**; **Mark as… → Bought** moves her to Closed.
+- Open **Arjun Mehta** (WhatsApp ad): free text is allowed and the window countdown shows; **Send an approved template instead** shows the template form.
+- Keep the inbox open and run `python -m scripts.simulate human --lead-phone 919811155555` in the second window: a "Needs a person" toast appears without reloading (use a new number each time).
+- **Products**: add or edit a product, then type a customer message under "Check what the assistant finds".
+- **Settings**: change the questions, weights or "Hot from", link a post to a product.
+- **Activity**: every webhook event and what happened to it.
+- On your phone (same Wi-Fi): start the server with `--host 0.0.0.0`, allow it in the Windows firewall prompt, open `http://<your PC's IP>:8000`. Through your ngrok domain the dashboard works from anywhere (sign-in required).
+
+**7. Optional: work on the dashboard with instant reload**
+```powershell
+cd ..\frontend
+npm run dev                          # http://127.0.0.1:5173, uses the backend on :8000
+```
+
+**8. Optional: run the browser tests** - they change data, so use a separate
+test database:
+```powershell
+# window 1 (backend folder)
+$env:DATABASE_URL = "sqlite:///data/e2e.db"
+python -m alembic upgrade head
+python -m scripts.create_user --email owner@store.test --business-name "Sharma Kitchen Store" --password sandbox-pass-123
+python -m scripts.load_catalog
+python -m uvicorn app.main:app
+# window 2 (backend folder)
+$env:DATABASE_URL = "sqlite:///data/e2e.db"
+python -m scripts.simulate demo
+# window 3 (frontend folder)
+npx playwright install chromium      # once
+$env:E2E_META_APP_SECRET = "<META_APP_SECRET from your backend\.env>"
+npm run e2e                          # 7 passed; screenshots in frontend\e2e\screenshots
+```
+Delete `backend\data\e2e.db` afterwards. Open a new window (or
+`Remove-Item Env:DATABASE_URL`) before using your real database again.
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| http://127.0.0.1:8000 says "The dashboard is not built yet" | Step 5 (`npm ci`, `npm run build` in `frontend`) |
+| `npm ci` warns about an unsupported engine, or the build fails on Node | Install Node 24 LTS (step 2) and reopen PowerShell |
+| `npm` is not recognized | Reopen PowerShell after installing Node; check "Add to PATH" in the installer |
+| Bottom-left says "Offline - refreshing every 30 s" | The server restarted or the connection dropped; it reconnects by itself. Through ngrok, WebSockets work on the same domain |
+| Send button replaced by "Needs a template" | The WhatsApp 24-hour window is closed; use "Send an approved template instead" |
+| No templates to choose | Template names come from `TEMPLATE_*` in `.env`; with `META_API_MODE=live` set `WHATSAPP_BUSINESS_ACCOUNT_ID` to list the approved ones from Meta |
+| Alert links open the API docs | `DASHBOARD_URL` still ends with `/docs` (step 3) |
+| Dashboard looks old after an update | Run `npm run build` again, then Ctrl+F5 |
+| Sign-in fails with the right password | Is it the account from `scripts.create_user` in the database the server uses? (`DATABASE_URL` left set from step 8?) |
+
+### Your actions this week
+- Steps 1-6 on your PC; tell me if anything fails or looks wrong (a screenshot helps).
+- Use the dashboard as the salesperson would for a day of demo messages: what is missing, what is confusing, what should be first?
+- Look up your WhatsApp Business Account ID (Meta Business Settings) for the template list.
+
+### Next: Week 5
+Nurture follow-ups (opted-in leads only, capped), opt-out across channels and
+languages, erase a lead's personal data, analytics and costs page, and the
+full evaluation run.

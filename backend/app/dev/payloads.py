@@ -103,10 +103,12 @@ def whatsapp_ctwa(
     return whatsapp_text(from_phone, text, name, msg_id, referral)
 
 
-def whatsapp_audio(from_phone: str = "919876543210", msg_id: str | None = None) -> dict[str, Any]:
+def whatsapp_audio(
+    from_phone: str = "919876543210", msg_id: str | None = None, name: str = "Voice Customer"
+) -> dict[str, Any]:
     return _wa_envelope(
         {
-            "contacts": [{"profile": {"name": "Voice Customer"}, "wa_id": from_phone}],
+            "contacts": [{"profile": {"name": name}, "wa_id": from_phone}],
             "messages": [
                 {
                     "from": from_phone,

@@ -18,8 +18,7 @@ from app.db.models import Lead, Message, Product
 from app.qualify.config import get_config
 from app.qualify.scoring import ScoreResult, next_question, score, summarize
 from app.qualify.slots import QualifySlots, extract_rules
-from app.rag.embeddings import tokenize
-from app.rag.retrieve import RetrievedProduct, content_tokens
+from app.rag.retrieve import RetrievedProduct, mentions_product
 
 log = logging.getLogger(__name__)
 
@@ -83,10 +82,7 @@ def product_from_hits(text: str, hits: list[RetrievedProduct] | None) -> Qualify
     if not hits:
         return QualifySlots()
     top = hits[0]
-    names = set(tokenize(f"{top.product.name} {top.product.category}"))
-    words = [t for t in content_tokens(text) if len(t) >= 3]
-    mentioned = any(t in names or any(n.startswith(t[:4]) for n in names if len(t) >= 4) for t in words)
-    if not mentioned:
+    if not mentions_product(text, top.product):
         return QualifySlots()
     clear = (
         len(hits) == 1

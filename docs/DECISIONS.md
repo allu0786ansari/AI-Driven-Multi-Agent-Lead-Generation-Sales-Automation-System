@@ -387,3 +387,137 @@ asked about before. The "nothing within your budget" note is only added when
 the budget really excluded matching products (it was shown wrongly in the run).
 
 **Docs updated:** Spec Rev 5 Section 10.
+
+---
+
+## D-022 - 2026-10-15 - Week 4 - Dashboard stack, and FastAPI serves it
+
+**Context:** Spec Section 1 named React (Vite) + Tailwind with shadcn/ui or Ant
+Design, and did not say how the dashboard is hosted.
+
+**Decision:** React 19 + Vite + TypeScript + Tailwind CSS 4, TanStack Query,
+React Router, lucide icons and one font (Archivo, self-hosted through
+fontsource). A small set of components of our own (button, field, select,
+toast) instead of shadcn/ui or Ant Design: fewer dependencies, and the
+screens look like this product rather than like a component library.
+`npm run build` writes `frontend/dist`, and FastAPI serves it at `/`, so
+the dashboard, the API and the webhooks share one address and one process
+(no CORS settings, one ngrok tunnel). Unknown paths fall back to
+`index.html`; `/api`, `/webhooks`, `/ws` and `/docs` are never shadowed;
+files outside `dist` cannot be read. Before the first build, `/` shows a page
+explaining `npm ci && npm run build`. `npm run dev` (port 5173) proxies `/api`
+and `/ws` to the backend for front-end work. Node 22.12 or newer (24 LTS
+recommended); package versions are pinned.
+
+**Docs updated:** Spec Rev 6 Sections 1, 2, 3.2, 5; proposal Rev 5.
+
+---
+
+## D-023 - 2026-10-15 - Week 4 - Inbox views, lead activity and read alerts
+
+**Decision:** The inbox opens on **Needs you**: leads a person is handling
+(not yet bought/lost) and hot leads. Other views: Open, Closed (Bought or
+Lost), All, with counts from `GET /api/leads/counts`. Each row shows the last
+message, its channel, unread alerts and who is handling it. "Converted" is
+shown as **Bought** in the dashboard (the API value stays `converted`).
+A new `lead_activity` table records status changes, assignment, take
+over / hand back and manual messages, with who did it; the conversation
+shows these between the messages. Opening a lead marks its alerts as read
+(`POST /api/notifications/read`). Marking a lead Bought or Lost stops its
+nurture schedule. `PATCH /api/leads/{id}` also sets `assigned_to` and the name.
+
+**Docs updated:** Spec Rev 6 Sections 3.2, 4.10.
+
+---
+
+## D-024 - 2026-10-15 - Week 4 - Manual messages: the backend says what is allowed
+
+**Decision:** `GET /api/leads/{id}` returns `reply_options` per channel:
+free text while the window is open (WhatsApp 24h, Instagram/Messenger 24h
+from the customer's last DM; a comment alone does not open it), an approved
+template on WhatsApp otherwise, and nothing if the customer opted out. The
+composer only offers what is allowed and shows when the window closes.
+`POST /api/leads/{id}/message` goes through the Send Gate like the
+assistant's messages (sender `salesperson`); the response is the gate's
+decision (`sent`, `needs_template`, `blocked`) with a reason. Sending a
+message takes the conversation over automatically, so the assistant does not
+answer in parallel. The browser sends a `client_message_id`, so a double
+click or a retry never sends twice.
+
+**Docs updated:** Spec Rev 6 Section 3.2.
+
+---
+
+## D-025 - 2026-10-15 - Week 4 - Live updates: a WebSocket that reads the database
+
+**Decision:** `WS /ws/notifications?token=<JWT>` (browsers cannot set headers
+on WebSockets, so the token travels in the query string; an invalid token
+closes with code 4401). Every 1.5 seconds the socket reads new notifications
+and recently changed leads for that business, and sends `notification` and
+`leads_changed` messages; the dashboard refreshes the affected lists and
+shows a toast. Reading the database instead of an in-memory event bus keeps
+it correct whichever process wrote the change, and costs one small query per
+open tab. The dashboard reconnects with backoff, shows Live / Connecting /
+Offline, and while offline still refreshes every 30 seconds.
+
+**Docs updated:** Spec Rev 6 Section 3.2.
+
+---
+
+## D-026 - 2026-10-15 - Week 4 - Template list: from Meta when live, from settings otherwise
+
+**Decision:** `GET /api/templates` reads the business's approved templates
+from Meta (`/{WABA ID}/message_templates`) when `META_API_MODE=live` and the
+new `WHATSAPP_BUSINESS_ACCOUNT_ID` is set; otherwise it lists the templates
+named in `.env` with known body text and the number of `{{n}}` values to fill
+in. The composer shows the body with the values filled in before sending.
+
+**Docs updated:** Spec Rev 6 Section 3.2; `.env.example`.
+
+---
+
+## D-027 - 2026-10-15 - Week 4 - Product editing; two endpoints move to Week 5
+
+**Decision:** `POST/PATCH/DELETE /api/products` added (duplicate SKU → 409;
+an edit is validated like an import; only that product is re-embedded, on
+the next search). The Products page has "Check what the assistant finds",
+which runs the agents' product search for a typed customer message.
+`DELETE /api/leads/{id}/personal-data` moves to Week 5 with the opt-out
+work, and the analytics endpoints stay in Week 5 as planned. Settings and
+notification endpoints moved into their own modules; their URLs did not
+change.
+
+**Docs updated:** Spec Rev 6 Sections 3.2, 5.
+
+---
+
+## D-028 - 2026-10-15 - Week 4 - Fixes from the browser run
+
+**Context:** The dashboard was tested in a real browser (Chromium, desktop
+and phone sizes) against the demo conversations
+(`python -m scripts.simulate demo`). Reading the screens showed problems
+the API tests had not.
+
+**Decision / fixes** (each has a regression test):
+1. A budget message ("Budget 15000, Coimbatore delivery this week?") was
+   answered with a kettle: weak letter matches beat the earlier interest.
+   A message now counts as naming a product only if its words match a
+   product's name or category (refines D-021).
+2. "Need 2, one for my mother" was not read as a quantity, so the assistant
+   kept asking "How many would you need?". "need / want / order / buy / take /
+   book N" now counts, but not sizes or money ("need 6L", "want 2 litre",
+   "need 5000 rs").
+3. Messages are now ordered by time in the conversation view, not by
+   timestamp text (a reply appeared above the voice note it answered).
+4. Instagram and Messenger customers without a name are shown as
+   "Instagram customer" / "Messenger customer", not "Unnamed customer".
+5. A lead the assistant handed over says "Waiting for a person" instead of
+   "You're handling this".
+6. Alert emails/Telegram messages now link to the lead's page
+   (`DASHBOARD_URL` default changed to `http://127.0.0.1:8000`).
+7. `GET /api/events` now returns `result_note`, which the Week 2-3 run log
+   already referred to.
+8. The demo script waits for the assistant's reply before a customer's next
+   message, as a person would, so the demo conversations read in order.
+
+**Docs updated:** Spec Rev 6 Section 10.

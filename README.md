@@ -18,7 +18,7 @@ leads, alerts the salesperson about hot leads, and nurtures inactive ones.
 
 ```
 backend/     FastAPI service (webhooks, agents, API, worker)
-frontend/    React dashboard (from Week 4)
+frontend/    React dashboard (Week 4), served by the backend at /
 docs/        Proposal, spec, runlog, decisions, Meta setup drafts
 ```
 
@@ -30,4 +30,16 @@ before a week is published. To continue the project in a new Claude
 conversation, point it at this repo and ask it to read `docs/RUNLOG.md` and
 `docs/DECISIONS.md` first.
 
-Quick start (Windows): see the latest week in [docs/RUNLOG.md](docs/RUNLOG.md).
+## Running it
+
+Backend: Python 3.11-3.13. Dashboard: Node.js 22.12 or newer (24 LTS recommended).
+
+```powershell
+cd frontend; npm ci; npm run build; cd ..\backend
+python -m uvicorn app.main:app --reload
+```
+
+Then open http://127.0.0.1:8000 (dashboard) or http://127.0.0.1:8000/docs (API).
+`python -m scripts.simulate demo` fills the dashboard with sample conversations.
+
+Full setup on Windows, week by week: [docs/RUNLOG.md](docs/RUNLOG.md).

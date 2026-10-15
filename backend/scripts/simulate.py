@@ -15,7 +15,7 @@ import argparse
 import json
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
 import httpx
@@ -35,7 +35,9 @@ def _send(client: httpx.Client, payload: dict[str, Any], secret: str, label: str
     return resp.status_code
 
 
-def _scenarios(args: argparse.Namespace) -> dict[str, Callable[[], list[tuple[str, dict[str, Any], bool]]]]:
+def _scenarios(
+    args: argparse.Namespace,
+) -> dict[str, Callable[[], Iterable[tuple[str, dict[str, Any], bool]]]]:
     text = args.text
 
     def dup() -> list[tuple[str, dict[str, Any], bool]]:
@@ -119,6 +121,95 @@ def _scenarios(args: argparse.Namespace) -> dict[str, Callable[[], list[tuple[st
     }
 
 
+DEMO_FOLLOW_UP_PAUSE = 2.5  # seconds; the customer waits for the reply before writing again
+
+
+def demo_conversations() -> Iterator[tuple[str, dict[str, Any], bool]]:
+    """A realistic morning for the dashboard (python -m scripts.simulate demo).
+
+    Not part of "all". Each customer has their own number/ID, so running it twice
+    simply continues the same conversations. Payloads are built just before they
+    are sent and follow-ups wait for the assistant's reply, so the conversation
+    reads in order (Meta timestamps are whole seconds; found in the Week 4 run).
+    """
+    ig_meena = "700000000000101"
+    steps: list[tuple[str, Callable[[], dict[str, Any]], bool]] = [
+        (
+            "meena: ig comment",
+            lambda: p.instagram_comment(
+                "Price of this air fryer? 😍", from_id=ig_meena, username="meena.cooks"
+            ),
+            False,
+        ),
+        (
+            "meena: ig dm",
+            lambda: p.instagram_message("The 6L one. Need 2, one for my mother", igsid=ig_meena),
+            True,
+        ),
+        (
+            "meena: ig dm",
+            lambda: p.instagram_message(
+                "Budget 15000. Coimbatore delivery this week? Want to order", igsid=ig_meena
+            ),
+            True,
+        ),
+        (
+            "arjun: ctwa",
+            lambda: p.whatsapp_ctwa(
+                "919845012345", "Hi! Is the mixer grinder still available?", name="Arjun Mehta"
+            ),
+            False,
+        ),
+        (
+            "arjun: wa",
+            lambda: p.whatsapp_text(
+                "919845012345", "1000 watt wala, kitne ka hai? Next week tak lena hai", name="Arjun Mehta"
+            ),
+            True,
+        ),
+        ("lakshmi: voice", lambda: p.whatsapp_audio("919884055667", name="Lakshmi R"), False),
+        (
+            "rahul: fb complaint",
+            lambda: p.facebook_comment(
+                "My kettle stopped working after 2 weeks. Very disappointed",
+                from_id="500000000000222",
+                from_name="Rahul Sharma",
+            ),
+            False,
+        ),
+        (
+            "sana: messenger",
+            lambda: p.messenger_message(
+                "Do you have a water purifier for a small flat?", psid="600000000000333"
+            ),
+            False,
+        ),
+        (
+            "vikram: wa",
+            lambda: p.whatsapp_text("919900011122", "Induction cooktop price please", name="Vikram Nair"),
+            False,
+        ),
+        (
+            "deepa: ig dm",
+            lambda: p.instagram_message("Hand blender in stock?", igsid="700000000000444"),
+            False,
+        ),
+        (
+            "spam: ig comment",
+            lambda: p.instagram_comment(
+                "Earn 5000 daily from home!! check my bio",
+                from_id="700000000000999",
+                username="promo_deals_4u",
+            ),
+            False,
+        ),
+    ]
+    for label, build, follow_up in steps:
+        if follow_up:
+            time.sleep(DEMO_FOLLOW_UP_PAUSE)
+        yield label, build(), True
+
+
 def _ig_hot_conversation() -> list[tuple[str, dict[str, Any], bool]]:
     """Comment -> (private reply) -> the same person continues in Instagram DMs and becomes hot."""
     igsid = "700000000000777"
@@ -174,9 +265,10 @@ def main(argv: list[str] | None = None) -> int:
 
     scenarios = _scenarios(args)
     if args.list:
-        print("Scenarios: " + ", ".join(scenarios) + ", all")
+        print("Scenarios: " + ", ".join(scenarios) + ", all, demo")
         return 0
     names = list(scenarios) if args.scenario == "all" else [args.scenario]
+    scenarios["demo"] = demo_conversations
     unknown = [n for n in names if n not in scenarios]
     if unknown:
         print(f"Unknown scenario: {unknown[0]}. Use --list.", file=sys.stderr)

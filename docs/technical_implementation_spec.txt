@@ -1,8 +1,25 @@
 TECHNICAL IMPLEMENTATION SPECIFICATION
 AI-Driven Multi-Agent Lead Generation & Sales Automation System
 ==================================================================
-Revision 5 - 14 October 2026 (Week 3 build)
+Revision 6 - 15 October 2026 (Week 4 build)
 (Companion document to: project_proposal_ai_lead_gen_agent.txt)
+
+
+REVISION 6 NOTES (changes made during the Week 4 build - see
+docs/DECISIONS.md D-022 to D-028 for the reasons)
+----------------------------------------------------------------
+- Section 1: dashboard stack settled (React 19 + Vite + TypeScript +
+  Tailwind 4, own components, no shadcn/ui or Ant Design); FastAPI serves
+  the built dashboard at "/".
+- Section 2: dashboard described; WebSocket reads the database.
+- Section 3.2: inbox views and counts, reply options, manual message
+  body and result, lead activity, notifications read, product editing
+  rules, template source, WebSocket messages. Personal-data erasure moves
+  to Week 5.
+- Section 4: lead_activity table (4.10); notifications.read_at in use.
+- Section 5: Week 4 done as built; Week 5 gains personal-data erasure.
+- Section 10: when a message counts as naming a product; "need 2" read as
+  a quantity.
 
 
 REVISION 5 NOTES (changes made during the Week 3 build - see
@@ -86,9 +103,13 @@ Backend:               FastAPI (Python)
 Background work:       DB-backed queue: the inbound_events table, processed
                        by an in-process asyncio worker (no Redis; works the
                        same on Windows and Linux)
-Frontend:              React (Vite) + Tailwind CSS + shadcn/ui (or Ant Design)
-Data fetching:         TanStack Query (React Query)
-Real-time updates:     WebSocket (FastAPI native)
+Frontend:              React 19 + Vite + TypeScript + Tailwind CSS 4, own
+                       small component set (Rev 6, D-022); built to
+                       frontend/dist and served by FastAPI at "/"
+Data fetching:         TanStack Query (React Query), React Router
+Real-time updates:     WebSocket (FastAPI native), reading the database
+                       every 1.5 s (Rev 6, D-025)
+Frontend tests:        Vitest + Testing Library; Playwright browser tests
 LLM (prototype):       Ollama local model, chosen by evaluation (Llama 3.x /
                        Qwen / Gemma candidates); JSON-schema structured output
 Embeddings:            "hashing" (built in, no model) by default; a local
@@ -151,8 +172,11 @@ Logging:               Structured JSON logs with a per-lead trace ID;
   most every SHEETS_SYNC_SECONDS when something changed (Rev 5).
 - Meta feedback worker (stretch): sends lead stage changes to Conversions
   API for CRM.
-- React frontend: salesperson dashboard (lead inbox, lead detail with
-  takeover, catalog, analytics, settings).
+- React frontend: salesperson dashboard (Rev 6): lead inbox (Needs you /
+  Open / All / Closed), lead page (conversation across channels, score and
+  why, take over / hand back, reply through the Send Gate, status,
+  assignment), alerts, product catalog, settings, webhook activity; live
+  updates over WebSocket; phone layout. Analytics tab in Week 5.
 - Evaluation harness: replays a labelled set of real messages through the
   agents and reports accuracy; run before every model/prompt change.
 
@@ -227,16 +251,29 @@ Logging:               Structured JSON logs with a per-lead trace ID;
   GET  /api/leads
       - Lead list, filterable by status (hot/warm/cold/contacted/
         converted/lost), source and channel
-      - Pagination and sort (by score, by recency)
+      - view=needs_you|open|closed|all (Rev 6, D-023): needs_you = a person
+        is handling it and it is not bought/lost, or it is hot; closed =
+        converted or lost. q= searches name, phone, email, product
+        interest and summary. limit/offset; newest activity first.
+      - Each row also has the last message (text, direction, sender,
+        channel, time), unread alert count and assigned_to (Rev 6)
+
+  GET  /api/leads/counts                         (Rev 6)
+      - {needs_you, open, closed, all} for the inbox tabs
 
   GET  /api/leads/{lead_id}
       - Full lead detail: contact info, source and ad attribution, consent
         record, full conversation history across channels, score + scoring
         rationale, open messaging windows, messaging cost to date
+      - Rev 6: activity (lead_activity rows), reply_options per channel
+        {channel, free_text, free_text_until, templates_allowed, reason},
+        default_channel, opted_out_at
 
   PATCH /api/leads/{lead_id}
-      - Update lead status manually (Contacted / Converted / Lost). Status
-        changes are queued for the Meta feedback worker (stretch).
+      - Update lead status manually (Contacted / Converted / Lost), and
+        assigned_to / name (Rev 6). Converted or lost clears the nurture
+        schedule. Each change is recorded in lead_activity. Status changes
+        are queued for the Meta feedback worker (stretch).
 
   POST /api/leads/{lead_id}/takeover
       - Salesperson takes over; sets is_human_takeover = true. The Send
@@ -249,8 +286,13 @@ Logging:               Structured JSON logs with a per-lead trace ID;
       - Salesperson sends a manual message (goes through the Send Gate,
         which tells the UI whether free-form is allowed or a template is
         required)
+      - Rev 6 (D-024): body {channel?, text | template {name, params,
+        category}, client_message_id}; exactly one of text / template.
+        Response {decision: sent | needs_template | blocked, reason,
+        message}. Sender "salesperson"; idempotency key
+        manual:<client_message_id>; sending takes the conversation over.
 
-  DELETE /api/leads/{lead_id}/personal-data
+  DELETE /api/leads/{lead_id}/personal-data       (moved to Week 5, D-027)
       - Erases a lead's personal data on request (keeps an anonymised row
         for analytics)
 
@@ -265,9 +307,16 @@ Logging:               Structured JSON logs with a per-lead trace ID;
   DELETE /api/products/{product_id}
       - CRUD for the product catalog feeding the RAG pipeline
       - On create/update, backend re-embeds the affected product only
+      - Rev 6: GET takes q=; GET /api/products/categories; duplicate SKU
+        -> 409; PATCH is validated as a whole product (422 on bad values);
+        DELETE -> 204 and removes the product's vector
 
   GET  /api/templates
       - Lists WhatsApp templates and their Meta approval status
+      - Rev 6 (D-026): from Meta (/{WABA ID}/message_templates) when
+        META_API_MODE=live and WHATSAPP_BUSINESS_ACCOUNT_ID is set;
+        otherwise the template names from settings, with known body text
+        and the number of {{n}} values
 
   GET  /api/settings/qualification
   PUT  /api/settings/qualification            (available from Week 3)
@@ -285,6 +334,11 @@ Logging:               Structured JSON logs with a per-lead trace ID;
   GET  /api/notifications                      (Rev 5)
       - Alerts sent to the salesperson (hot_lead, handoff,
         customer_replied), newest first, with delivery status.
+      - Rev 6: ?unread=true; read_at in each row.
+  GET  /api/notifications/unread-count         (Rev 6)
+  POST /api/notifications/read                 (Rev 6)
+      - Body {ids: [...]} | {lead_id} | {all: true}. The dashboard marks a
+        lead's alerts read when the lead is opened.
 
   GET /api/analytics/summary
       - Leads captured (today/week), conversion rate, median response
@@ -297,6 +351,15 @@ Logging:               Structured JSON logs with a per-lead trace ID;
   WS /ws/notifications
       - Real-time "new hot lead", "lead replied", "handoff requested",
         "message failed" alerts
+      - Rev 6 (D-025): ?token=<JWT> (an invalid token closes with 4401).
+        Server messages: {"type": "hello", "unread"},
+        {"type": "notification", ...NotificationOut},
+        {"type": "leads_changed", "lead_ids": [...]}; "ping" -> "pong".
+
+  GET  /  and any other non-API path            (Rev 6, D-022)
+      - The built dashboard (frontend/dist); unknown paths return
+        index.html. /api, /webhooks, /ws, /docs are never shadowed; files
+        outside frontend/dist are never served.
 
 
 3.3 Internal interfaces (function signatures, prototype)
@@ -454,8 +517,14 @@ migration of existing rows.
   notification_id, user_id, lead_id, kind (hot_lead | handoff |
   customer_replied), title, body, idempotency_key (unique), status
   (queued | sent | logged | failed), channels_sent (JSON list), attempts,
-  next_attempt_at, error, read_at (for the Week 4 dashboard), created_at,
-  sent_at.
+  next_attempt_at, error, read_at (set when the salesperson opens the
+  lead or the Alerts page - Rev 6), created_at, sent_at.
+
+4.10 lead_activity (Rev 6, D-023)
+  activity_id, user_id, lead_id, actor (salesperson's email or "system"),
+  kind (status | assign | takeover | release | message), detail (JSON,
+  e.g. {"from": "hot", "to": "converted"}), created_at. Shown in the
+  conversation between messages; later input for analytics.
 
 4.7 product_embeddings (Rev 4, D-007)
   product_id (PK, deleted with the product), user_id, model (e.g.
@@ -511,16 +580,20 @@ Week 3 - Comments, DMs, Qualify, alerts
   - Hot-lead alert via email/Telegram
   - Sheets sync worker
 
-Week 4 - Dashboard (frontend)
+Week 4 - Dashboard (frontend)                        (done, Rev 6)
   - React + Vite + Tailwind scaffold
   - Lead inbox (GET /api/leads) and lead detail (GET /api/leads/{id})
   - Manual status update, takeover/release, manual message via Send Gate
   - WebSocket notifications
   - Qualification settings page
+  - Also built: alerts page, product editing, post/ad links page,
+    webhook activity page, assignment, lead activity, phone layout,
+    demo conversations, unit + browser tests
 
 Week 5 - Nurture, analytics, evaluation
   - APScheduler nurture job: opted-in leads only, capped follow-ups
   - Opt-out handling verified across channels and languages
+  - DELETE /api/leads/{id}/personal-data (moved from Week 4, D-027)
   - Analytics summary + cost endpoints and dashboard tab
   - Full evaluation harness run; fix prompts/model choice against targets
   - Stretch: Meta feedback worker (Conversions API for CRM)
@@ -716,11 +789,16 @@ Instagram / Facebook
   the budget, the closest products are shown and the LLM is told so.
 - Messages that name no product ("ok thanks", "when can you deliver?")
   are answered about the lead's earlier product interest (Rev 5, D-021).
+  A message names a product only if one of its words (3+ letters) equals
+  a word of a product's name or category, or (4+ letters) starts the same
+  4 letters as one ("fryers" ~ "fryer"); description-only or weaker search
+  matches do not count (Rev 6, D-028).
 - Comment classification (Rev 5, D-016): LLM with JSON output; keyword
   rules when no model is configured or it fails, and as an override for
   obvious spam links and complaints.
 - Qualification (Rev 5, D-017): the reply call also returns "extracted"
-  details; keyword rules run on every message (budget, quantity, timeline
+  details; keyword rules run on every message (budget, quantity - "3 pcs",
+  "qty 12", and "need/want/order 2" but not "need 6L" or "5000 rs", timeline
   now/this_week/this_month/later, city or 6-digit PIN, intent, negative
   sentiment, asking for a person). Each reply ends with the next missing
   qualifying question from the business's list.

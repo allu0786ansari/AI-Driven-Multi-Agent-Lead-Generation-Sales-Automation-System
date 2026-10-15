@@ -1,0 +1,125 @@
+@import "tailwindcss";
+@import "@fontsource-variable/archivo/wdth.css";
+
+/*
+  Lead desk - design tokens.
+  Steel and ink everywhere; the only loud colour is lead temperature (cold -> warm -> hot).
+*/
+
+:root {
+  --steel: #e9edf0; /* app background */
+  --sheet: #ffffff; /* panels */
+  --sheet-2: #f4f6f8; /* quiet fills: hovered rows, inbound bubbles */
+  --ink: #18303f; /* text, primary buttons */
+  --ink-2: #4d6271; /* secondary text */
+  --ink-3: #7a8b97; /* tertiary text, placeholders */
+  --rule: #cbd3da;
+  --cold: #6e93b3;
+  --warm: #e2a72e;
+  --hot: #cf3b22;
+  --ok: #1e7a4f;
+  --danger: #b4291a;
+  --wa: #1e8a5a;
+  --ig: #b0367a;
+  --fb: #2e6bd6;
+  --focus: #2e6bd6;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --steel: #0f1a21;
+    --sheet: #16232c;
+    --sheet-2: #1d2c36;
+    --ink: #e3eaef;
+    --ink-2: #a9b8c3;
+    --ink-3: #7d8e99;
+    --rule: #2b3b46;
+    --cold: #7fa6c8;
+    --warm: #ebb543;
+    --hot: #e5553b;
+    --ok: #46b383;
+    --danger: #ef6a55;
+    --wa: #3fb37f;
+    --ig: #d4589c;
+    --fb: #5b8ff0;
+    --focus: #7fb0ff;
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --color-steel: var(--steel);
+  --color-sheet: var(--sheet);
+  --color-sheet-2: var(--sheet-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-rule: var(--rule);
+  --color-cold: var(--cold);
+  --color-warm: var(--warm);
+  --color-hot: var(--hot);
+  --color-ok: var(--ok);
+  --color-danger: var(--danger);
+  --color-wa: var(--wa);
+  --color-ig: var(--ig);
+  --color-fb: var(--fb);
+  --font-sans: "Archivo Variable", system-ui, "Noto Sans Devanagari", "Noto Sans Tamil", "Nirmala UI",
+    sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--steel);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings: "wdth" 100;
+}
+
+/* Expanded cut of Archivo for scores and page titles: the type itself carries the heat. */
+.wide {
+  font-variation-settings: "wdth" 125;
+  letter-spacing: -0.01em;
+}
+.narrow {
+  font-variation-settings: "wdth" 82;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Customer messages keep their own line breaks and long words wrap. */
+.msg-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .arrive {
+    animation: arrive 260ms ease-out;
+  }
+  @keyframes arrive {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}

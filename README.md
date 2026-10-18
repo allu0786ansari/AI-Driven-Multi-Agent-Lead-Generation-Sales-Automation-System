@@ -42,4 +42,14 @@ python -m uvicorn app.main:app --reload
 Then open http://127.0.0.1:8000 (dashboard) or http://127.0.0.1:8000/docs (API).
 `python -m scripts.simulate demo` fills the dashboard with sample conversations.
 
+Useful commands (backend folder):
+
+| Command | What it does |
+|---|---|
+| `python -m scripts.simulate --list` | Send test webhooks (signed like Meta's); `demo` fills the dashboard |
+| `python -m scripts.nurture` | Who gets a follow-up next, and why not the others; `run --days-ahead 3` for a demo |
+| `python -m scripts.evaluate` | Check the agents against the prototype's quality targets ([data/eval](backend/data/eval/README.md)) |
+| `python -m scripts.eval_retrieval` | Compare embedding models for product search |
+| `python -m scripts.load_catalog` | Import or update the product catalog |
+
 Full setup on Windows, week by week: [docs/RUNLOG.md](docs/RUNLOG.md).

@@ -21,6 +21,7 @@ export interface LeadSummary {
   messaging_cost_estimate: string;
   created_at: string;
   last_activity_at: string;
+  erased_at: string | null;
   last_message_text: string | null;
   last_message_at: string | null;
   last_message_direction: "inbound" | "outbound" | null;
@@ -33,7 +34,7 @@ export interface Message {
   message_id: string;
   channel: Channel;
   direction: "inbound" | "outbound";
-  sender: "lead" | "agent" | "salesperson" | "system";
+  sender: "lead" | "agent" | "salesperson" | "system" | "nurture";
   text: string | null;
   media_type: string;
   template_name: string | null;
@@ -48,8 +49,8 @@ export interface Message {
 export interface Activity {
   activity_id: string;
   actor: string;
-  kind: "status" | "assign" | "takeover" | "release" | "message";
-  detail: Record<string, string | null>;
+  kind: "status" | "assign" | "takeover" | "release" | "message" | "follow_up" | "consent" | "erase" | "feedback";
+  detail: Record<string, string | number | boolean | null>;
   created_at: string;
 }
 
@@ -96,6 +97,16 @@ export interface LeadDetail extends LeadSummary {
   activity: Activity[];
   reply_options: ReplyOption[];
   default_channel: Channel | null;
+  opt_in_asked_at: string | null;
+  follow_up: FollowUp | null;
+  hot_feedback: boolean | null;
+}
+
+export interface FollowUp {
+  due_at: string | null;
+  template: string | null;
+  sent: number;
+  reason: string;
 }
 
 export type Counts = Record<View | LeadStatus | "takeover", number>;
@@ -165,4 +176,89 @@ export interface InboundEvent {
   trace_id: string;
   received_at: string;
   processed_at: string | null;
+}
+
+// ---- Week 5 ----
+
+export type NurtureParam = "first_name" | "product" | "offer";
+
+export interface NurtureStep {
+  after_days: number;
+  template: string;
+  params: NurtureParam[];
+}
+
+export interface NurtureConfig {
+  enabled: boolean;
+  steps: NurtureStep[];
+  offer_text: string;
+  max_per_lead: number;
+  max_quiet_days: number;
+  send_from_hour: number;
+  send_until_hour: number;
+}
+
+export interface Upcoming {
+  upcoming: { lead_id: string; name: string | null; product_interest: string | null; due_at: string; step: number }[];
+  sent_last_7_days: number;
+}
+
+export interface Period {
+  days: number;
+  from: string;
+  to: string;
+  timezone: string;
+}
+
+export interface AnalyticsSummary {
+  period: Period;
+  leads: {
+    total: number;
+    today: number;
+    last_7_days: number;
+    by_source: Record<string, number>;
+    by_channel: Record<string, number>;
+    by_status: Record<string, number>;
+  };
+  daily: { date: string; leads: number; hot: number }[];
+  funnel: { stage: "captured" | "replied" | "qualified" | "hot" | "bought"; count: number }[];
+  rates: {
+    reply_rate_pct: number | null;
+    qualified_pct: number | null;
+    conversion_pct: number | null;
+    win_rate_pct: number | null;
+  };
+  first_response: {
+    measured: number;
+    unanswered: number;
+    median_seconds: number | null;
+    p95_seconds: number | null;
+    within_target_pct: number | null;
+    target_seconds: number;
+  };
+  handoffs: number;
+  follow_ups: {
+    sent: number;
+    leads_followed_up: number;
+    re_engaged: number;
+    opt_ins: number;
+    opt_ins_by_source: Record<string, number>;
+    opt_outs: number;
+  };
+  hot_label_feedback: { answered: number; agreed: number; agreement_pct: number | null; target_pct: number };
+}
+
+export interface AnalyticsCosts {
+  period: Period;
+  currency: string;
+  total: string;
+  messages: number;
+  daily: { date: string; cost: string }[];
+  by_channel: Record<string, string>;
+  by_category: Record<string, { messages: number; cost: string }>;
+  per_lead: string | null;
+  per_qualified_lead: string | null;
+  per_bought_lead: string | null;
+  saved_by_free_entry_window: string;
+  note: string;
 }

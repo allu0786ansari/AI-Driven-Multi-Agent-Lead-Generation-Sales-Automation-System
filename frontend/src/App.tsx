@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from "./lib/auth";
 import { useLiveUpdates } from "./lib/live";
 import { Activity } from "./pages/Activity";
 import { Alerts } from "./pages/Alerts";
+import { Analytics } from "./pages/Analytics";
 import { Inbox, NoLeadSelected } from "./pages/Inbox";
 import { LeadPane } from "./pages/lead/LeadPane";
 import { Login } from "./pages/Login";
@@ -50,6 +51,7 @@ export default function App() {
                   <Route path=":leadId" element={<LeadPane />} />
                 </Route>
                 <Route path="/alerts" element={<Alerts />} />
+                <Route path="/analytics" element={<Analytics />} />
                 <Route path="/products" element={<Products />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/activity" element={<Activity />} />

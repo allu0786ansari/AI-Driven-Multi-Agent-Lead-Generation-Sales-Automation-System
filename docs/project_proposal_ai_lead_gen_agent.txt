@@ -1,8 +1,30 @@
 PROJECT PROPOSAL
 AI-Driven Multi-Agent Lead Generation & Sales Automation System
 ==================================================================
-Revision 5 - 15 October 2026 (updated during the Week 4 build)
+Revision 6 - 18 October 2026 (updated during the Week 5 build)
 (Companion document: technical_implementation_spec.txt)
+
+
+REVISION 6 NOTES (see docs/DECISIONS.md for the reasons)
+---------------------------------------------------------
+- Follow-ups run inside the existing server process; no separate
+  scheduler to install (D-029). They go out only in business hours, stop
+  as soon as the customer writes, and are capped per customer. Customers
+  quiet for more than 30 days get no new follow-ups.
+- Customers who come from a WhatsApp ad or write first are asked once in
+  the chat whether they want offers and reminders; a YES is recorded like
+  a lead-form tick box. Without this, the main WhatsApp entry point could
+  never receive follow-ups (D-031).
+- Opting out stops every message the business starts. A customer who
+  opted out and later asks a question is still answered (D-030).
+- Complaints and order problems written in a chat now go straight to a
+  person, as they already did for public comments (D-035).
+- The salesperson can erase a customer's personal data on request
+  (D-032), and confirms or rejects "hot" labels in one tap, which
+  measures the third quality target (D-033).
+- The quality targets are measured with an evaluation script. Week 5
+  results with keyword rules only, before the model is chosen, are in
+  Section 9 (D-034).
 
 
 REVISION 5 NOTES (see docs/DECISIONS.md for the reasons)
@@ -198,6 +220,10 @@ microservices):
         entry window).
       - Caps the number of follow-ups per lead and stops on reply,
         conversion, opt-out, or human takeover.
+      - (Rev 6) Default sequence: day 2 check-in, day 5 offer (when an
+        offer is set), day 10 last reminder; business hours only; editable
+        on the dashboard. Customers from ads and DMs are asked once in the
+        chat for permission first.
 
 Send Gate (new, shared by all agents)
    - Every outbound message passes through one function that:
@@ -278,7 +304,8 @@ Vector store:              Product vectors in the main database (Rev 3);
 Database:                  SQLite (prototype) -> Postgres
 Sheets mirror:             Google Sheets API (free tier), read-only view
 Backend / webhook server:  Python FastAPI with a background task queue
-Scheduler (nurture jobs):  APScheduler
+Scheduler (nurture jobs):  The server's own background worker (Rev 6; no
+                           separate scheduler)
 Social integration:        Meta Graph API (comments, private replies,
                            Instagram/Messenger messaging, lead forms) -
                            requires Meta Developer App + Business
@@ -393,10 +420,12 @@ Phase 4: Dashboard + human takeover                 (built, Week 4)
     assistant; product catalog and qualification settings editable
     without code
 
-Phase 5: Nurture sequence
+Phase 5: Nurture sequence                            (built, Week 5)
   - Scheduled template follow-ups for opted-in inactive leads, with caps
     and opt-out handling
   - Erase a customer's personal data on request (Rev 5)
+  - Analytics page (leads, funnel, speed, follow-ups, costs) and the
+    evaluation script for the quality targets
 
 Phase 6 (stretch): Ad feedback loop
   - Send qualified/converted stages to Meta via Conversions API for CRM
@@ -420,6 +449,15 @@ AI quality (measured on the evaluation set; proposed targets, to be agreed):
 - Comment intent classification accuracy >= 90%
 - Product questions answered correctly (or correctly handed off) >= 95%
 - Salesperson agrees with "Hot" labels for >= 80% of hot leads
+
+How it is measured (Rev 6): python -m scripts.evaluate for the first two
+(comments scored on the action taken), and the "Is this lead really hot?"
+answers on the dashboard's Analytics page for the third. Week 5 results
+with keyword rules only, before the model is chosen, on synthetic messages:
+24 messages written after the rules were tuned and run once gave
+comment actions 75% and product answers 92.9%, with no wrong prices.
+Both are below target, so the model choice matters. The decisive run uses
+the chosen Ollama model on 50-100 of the business's real messages.
 
 Business (measured against the Phase 0 baseline):
 - Median time to first response
@@ -454,7 +492,9 @@ WhatsApp
   Lead forms must include clear WhatsApp consent wording; consent source
   and timestamp are stored per lead.
 - Opt-out keywords (e.g. STOP, in the languages customers use) and
-  template opt-out buttons are honoured immediately.
+  template opt-out buttons are honoured immediately. (Rev 6: English,
+  Hindi, Hinglish, Tamil and Tanglish words and the "Stop" buttons are
+  recognised; START opts back in; erasure on request is available.)
 - Since 15 January 2026 Meta prohibits general-purpose AI assistants on the
   WhatsApp Business Platform. Business-specific sales and support agents
   remain allowed; this system must stay focused on the business's own

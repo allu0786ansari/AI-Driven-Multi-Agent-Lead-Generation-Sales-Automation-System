@@ -17,7 +17,10 @@ from app.db.enums import Channel, LeadStatus, PricingCategory
 from app.db.models import Lead, LeadActivity, Message
 from app.db.session import get_db
 from app.leads import service
+from app.leads.erase import erase_personal_data
 from app.messaging.send_gate import Decision
+from app.nurture.agent import next_follow_up
+from app.nurture.config import get_config as get_nurture_config
 
 router = APIRouter(prefix="/api", tags=["leads"])
 
@@ -41,6 +44,7 @@ class LeadSummary(BaseModel):
     messaging_cost_estimate: Decimal
     created_at: datetime
     last_activity_at: datetime
+    erased_at: datetime | None = None  # Week 5: personal data erased
     # Week 4: inbox extras
     last_message_text: str | None = None
     last_message_at: datetime | None = None
@@ -82,6 +86,13 @@ class ReplyOptionOut(BaseModel):
     reason: str
 
 
+class FollowUpOut(BaseModel):
+    due_at: datetime | None  # next follow-up, None if none is planned
+    template: str | None
+    sent: int  # follow-ups sent to this lead so far
+    reason: str  # why none is planned
+
+
 class LeadDetail(LeadSummary):
     contact_email: str | None
     source_detail: str | None
@@ -105,6 +116,10 @@ class LeadDetail(LeadSummary):
     activity: list[ActivityOut]
     reply_options: list[ReplyOptionOut]
     default_channel: str | None
+    # Week 5
+    opt_in_asked_at: datetime | None = None
+    follow_up: FollowUpOut | None = None
+    hot_feedback: bool | None = None  # salesperson agreed (True) / disagreed (False) with "hot"
 
 
 def _get_lead(db: Session, user_id: str, lead_id: str) -> Lead:
@@ -211,7 +226,7 @@ def get_lead(lead_id: str, user: CurrentUser, db: Annotated[Session, Depends(get
     ).all()
     data = LeadSummary.model_validate(lead, from_attributes=True).model_dump()
     data["unread_alerts"] = service.unread_alert_counts(db, user.user_id, [lead_id]).get(lead_id, 0)
-    skip = {"messages", "activity", "reply_options", "default_channel"}
+    skip = {"messages", "activity", "reply_options", "default_channel", "follow_up", "hot_feedback"}
     extra = {k: getattr(lead, k) for k in LeadDetail.model_fields if k not in data and k not in skip}
     out_messages = []
     for m in messages:
@@ -225,6 +240,8 @@ def get_lead(lead_id: str, user: CurrentUser, db: Annotated[Session, Depends(get
         activity=[ActivityOut.model_validate(a, from_attributes=True) for a in activity],
         reply_options=[ReplyOptionOut(**vars(o)) for o in service.reply_options(db, lead)],
         default_channel=service.default_channel(db, lead),
+        follow_up=FollowUpOut(**vars(next_follow_up(db, lead, get_nurture_config(db, user.user_id)))),
+        hot_feedback=service.hot_feedback(activity),
     )
 
 
@@ -328,3 +345,42 @@ def send_message(
         msg = MessageOut.model_validate(result.message, from_attributes=True)
         msg.kind = (result.message.payload or {}).get("type")
     return ManualMessageOut(decision=result.decision, reason=result.reason, message=msg)
+
+
+class EraseOut(BaseModel):
+    erased_at: datetime
+    messages: int
+    events: int
+    alerts: int
+    cancelled: int
+
+
+@router.delete("/leads/{lead_id}/personal-data", response_model=EraseOut)
+def erase(lead_id: str, user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> EraseOut:
+    """Erase the customer's personal data (on their request). Cannot be undone.
+
+    Keeps an anonymous row (source, product, score, status, dates, costs) for analytics.
+    """
+    lead = _get_lead(db, user.user_id, lead_id)
+    if lead.erased_at is not None:
+        raise HTTPException(status_code=409, detail="Personal data was already erased")
+    result = erase_personal_data(db, lead, user.email)
+    db.commit()
+    return EraseOut(erased_at=lead.erased_at, **vars(result))
+
+
+class FeedbackIn(BaseModel):
+    agree: bool  # does the salesperson agree with the "hot" label?
+
+
+@router.post("/leads/{lead_id}/feedback", response_model=LeadSummary)
+def hot_label_feedback(
+    lead_id: str, body: FeedbackIn, user: CurrentUser, db: Annotated[Session, Depends(get_db)]
+) -> LeadSummary:
+    """Record whether this lead really is hot (measures proposal target: >= 80% agreement)."""
+    lead = _get_lead(db, user.user_id, lead_id)
+    service.record(
+        db, lead, user.email, "feedback", agree=body.agree, status=lead.status, score=lead.qualification_score
+    )
+    db.commit()
+    return LeadSummary.model_validate(lead, from_attributes=True)

@@ -3,8 +3,13 @@
 Every outbound message is decided here, in this order:
 
   1. Idempotency    - the same key never creates a second message
-  2. Opt-out        - nothing goes to a lead who opted out (except the opt-out confirmation)
-  3. Human takeover - agents stay silent while a salesperson has the conversation
+  2. Opt-out        - nothing the business starts goes to a lead who opted out
+                      (templates, follow-ups). If the customer writes again
+                      afterwards, normal replies to that conversation are
+                      allowed (Week 5, D-030). The opt-out confirmation itself
+                      is always allowed.
+  3. Human takeover - the assistant and follow-ups stay silent while a
+                      salesperson has the conversation
   4. Channel        - WhatsApp, Instagram, Messenger (Week 3)
   5. Window rules   - WhatsApp: free-form text only inside the 24h service
                       window, otherwise a pre-approved template is required.
@@ -75,6 +80,15 @@ class SendResult:
     message: Message | None = None
 
 
+def wrote_after_opt_out(lead: Lead) -> bool:
+    """The customer messaged us after opting out, so replying to them is allowed."""
+    return (
+        lead.opted_out_at is not None
+        and lead.last_inbound_at is not None
+        and lead.last_inbound_at > lead.opted_out_at
+    )
+
+
 def _rate(category: PricingCategory) -> Decimal:
     s = get_settings()
     rates = {
@@ -113,8 +127,9 @@ def queue_message(
         return SendResult(Decision.BLOCKED, reason)
 
     if lead.opted_out and not allow_opted_out:
-        return blocked("lead opted out")
-    if sender == Sender.AGENT and lead.is_human_takeover:
+        if content.is_template or sender == Sender.NURTURE or not wrote_after_opt_out(lead):
+            return blocked("lead opted out")
+    if sender in (Sender.AGENT, Sender.NURTURE) and lead.is_human_takeover:
         return blocked("human takeover active")
     if (content.text is None) == (content.template_name is None):
         raise ValueError("OutboundContent needs exactly one of text or template_name")

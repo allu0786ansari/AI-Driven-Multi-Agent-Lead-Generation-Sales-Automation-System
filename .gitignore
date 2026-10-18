@@ -16,6 +16,9 @@ backend/data/*.db
 backend/data/*.db-*
 backend/logs/
 backend/data/leads_mirror.csv
+# Evaluation reports (generated) and real customer messages (personal data)
+backend/data/eval/reports/
+backend/data/eval/*.real.jsonl
 backend/secrets/
 
 # Node (frontend, from Week 4)

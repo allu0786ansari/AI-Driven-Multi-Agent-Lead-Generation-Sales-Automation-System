@@ -97,6 +97,8 @@ class Lead(Base):
     opt_in_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     opted_out: Mapped[bool] = mapped_column(Boolean, default=False)
     opted_out_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # When the assistant asked in the chat for permission to send offers/reminders (asked once; Week 5)
+    opt_in_asked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
     # Messaging windows
     last_inbound_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
@@ -110,6 +112,8 @@ class Lead(Base):
     messaging_cost_estimate: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=Decimal("0"))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     last_activity_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    # Personal data erased on the customer's request (Week 5); the row stays for analytics
+    erased_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 class Product(Base):

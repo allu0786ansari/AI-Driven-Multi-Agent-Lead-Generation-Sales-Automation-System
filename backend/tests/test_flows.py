@@ -156,16 +156,22 @@ def test_voice_note_handed_off(client: TestClient, catalog, llm: FakeLLMClient) 
 
 
 def test_stop_opts_out_and_confirms_once(client: TestClient, catalog, llm: FakeLLMClient) -> None:  # noqa: ANN001
+    import time
+
     signed_post(client, "/webhooks/whatsapp", p.whatsapp_text(PHONE, "STOP"))
     run_once()
     lead = _lead()
     assert lead.opted_out
     [confirmation] = _outbound(lead.lead_id)
-    assert "won't receive any more messages" in confirmation.text
-    signed_post(client, "/webhooks/whatsapp", p.whatsapp_text(PHONE, "air fryer price"))
-    run_once()
-    assert len(_outbound(lead.lead_id)) == 1
+    assert "won't receive any more offers or reminders" in confirmation.text
     assert llm.calls == []
+    # Week 5 (D-030): a later question from the customer is answered; follow-ups stay off.
+    signed_post(
+        client, "/webhooks/whatsapp", p.whatsapp_text(PHONE, "air fryer price", at=int(time.time()) + 5)
+    )
+    run_once()
+    assert len(_outbound(lead.lead_id)) == 2
+    assert _lead().opted_out
 
 
 def test_duplicate_webhook_replies_once(client: TestClient, catalog, llm: FakeLLMClient) -> None:  # noqa: ANN001

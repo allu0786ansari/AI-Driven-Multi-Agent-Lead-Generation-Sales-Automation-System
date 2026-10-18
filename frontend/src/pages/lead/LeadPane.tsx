@@ -90,6 +90,7 @@ export function LeadPane() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {!closed &&
+              !l.erased_at &&
               (l.is_human_takeover ? (
                 <Button onClick={() => takeover.mutate(false)} busy={takeover.isPending} icon={<Bot className="size-4" aria-hidden />}>
                   Hand back to assistant

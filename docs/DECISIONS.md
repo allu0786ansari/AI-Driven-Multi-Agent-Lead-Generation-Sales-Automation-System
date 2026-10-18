@@ -521,3 +521,171 @@ the API tests had not.
    message, as a person would, so the demo conversations read in order.
 
 **Docs updated:** Spec Rev 6 Section 10.
+
+---
+
+## D-029 - 2026-10-18 - Week 5 - Follow-ups run in the worker; rules are business settings
+
+**Context:** Spec Section 1 named APScheduler and Section 3.3 a daily
+`run_daily_check()`.
+
+**Decision:** No APScheduler. The worker that already handles webhooks and the
+outbox runs a follow-up pass every `NURTURE_CHECK_MINUTES` (default 10), so
+there is still one process and no second scheduler to keep alive on Windows.
+The rules are per business (Settings page, `GET/PUT /api/settings/nurture`):
+- **Sequence:** up to 5 steps, each "N days after the customer's last message
+  (or after the lead arrived) send template T". Default: day 2
+  `nurture_followup_1`, day 5 `nurture_offer` (skipped while no offer text is
+  set), day 10 `nurture_last_check`.
+- **Who:** WhatsApp number, recorded opt-in, not opted out, no person handling
+  the conversation, not Contacted / Bought / Lost, data not erased.
+  Contacted is excluded too: a salesperson is already following the lead up.
+- **Stops on reply:** any customer message (any channel, comments included)
+  ends the sequence; it starts again from step 1 if they go quiet again.
+- **Cap:** at most 6 follow-ups per lead, ever. No new sequence starts for
+  a customer quiet for more than 30 days. This was found when upgrading the
+  Week 4 database: old leads would otherwise get a sudden "just checking in".
+- **Business hours:** only between 10:00 and 19:00 in `BUSINESS_TIMEZONE`
+  (Asia/Kolkata); a follow-up due at night waits for the morning. The
+  `tzdata` package is now required, because Windows has no time zone database.
+- **Never twice:** each follow-up has a key (lead + quiet period + step), so
+  two passes at once cannot send it twice. Follow-ups go through the Send Gate
+  as marketing templates with sender `nurture`; a takeover pauses them like
+  the assistant.
+`python -m scripts.nurture` shows what is planned; `run --days-ahead 3` sends
+what would be due in 3 days (for demos). The Settings page lists what is
+planned next, worked out live.
+
+**Docs updated:** Spec Rev 7 Sections 1, 2, 3.2, 3.3, 5; proposal Rev 6.
+
+---
+
+## D-030 - 2026-10-18 - Week 5 - What opting out means
+
+**Context:** The opt-out confirmation said "If you change your mind, just send
+us a message here", but a customer who opted out and wrote again was never
+answered. Only 8 English/Hindi words were recognised.
+
+**Decision:** Opting out stops everything the business starts: follow-ups and
+templates, at once and for good. If the customer writes to us later, that
+conversation is answered normally, because they started it. Follow-ups stay
+off until they send **START** (recorded as a new opt-in, source `keyword`).
+Recognised: whole-message opt-out words in English, Hindi, Hinglish, Tamil and
+Tanglish ("STOP", "band karo", "बंद करो", "मत भेजो", "நிறுத்து", "anupa vendam"),
+the template buttons "Stop messages" and "Stop promotions", and short
+messages starting with stop / unsubscribe / don't send / no more that are
+about messages or offers ("stop sending these offers", "Unsubscribe me").
+Messages about an order or a product never opt out ("cancel my order", "stop
+the order", "don't send me the 4L, send the 6L"). Matching ignores
+punctuation and emoji, and keeps Hindi/Tamil vowel signs (Python's usual
+word-character rule would drop them and never match "बंद"). The dashboard offers free-text
+replies to such a customer only after they write again, never templates.
+
+**Docs updated:** Spec Rev 7 Sections 9, 10; meta_setup section 5; proposal Rev 6.
+
+---
+
+## D-031 - 2026-10-18 - Week 5 - Asking for WhatsApp opt-in in the chat
+
+**Context:** Follow-ups need recorded opt-in. Only lead forms collected it, so
+customers from WhatsApp ads and DMs (the main entry point) could never get a
+follow-up. `meta_setup.md` already promised a one-time question.
+
+**Decision:** On WhatsApp, once the customer has answered all qualifying
+questions, the assistant's reply ends with "Can we send you offers and
+reminders on WhatsApp? Reply YES or NO." The question is added by code word
+for word (with the built-in catalog reply it replaces the usual closing
+question, so the message asks one question). It is asked once per customer,
+and only while follow-ups are switched on. A YES-type answer (yes, ok, haan,
+हाँ, சரி, ...) to that message is recorded as opt-in with the exact wording
+and source `ctwa_message` or `dm`; a NO is recorded on the lead's history and
+never asked again.
+
+**Docs updated:** Spec Rev 7 Sections 3.3, 4.1, 10; meta_setup section 5.
+
+---
+
+## D-032 - 2026-10-18 - Week 5 - Erasing personal data
+
+**Decision:** `DELETE /api/leads/{id}/personal-data` (button on the lead page,
+with a confirmation step). Removed: name, phone, email, every platform ID,
+the conversation summary and details given (city, budget), the text and raw
+payload of every message, the raw webhook events that contain the customer's
+number or IDs, and alert texts. Messages still waiting to be sent are
+cancelled, and the lead is marked opted out. Kept, without anything
+identifying: source, channel, product interest, score, status, dates, message
+counts and costs, consent records. Analytics and cost totals stay correct. The
+same number writing again later becomes a new lead. The Sheets mirror drops
+the data at its next refresh; logs never held it (personal data is masked).
+
+**Docs updated:** Spec Rev 7 Sections 3.2, 4.1, 11; proposal Rev 6.
+
+---
+
+## D-033 - 2026-10-18 - Week 5 - Analytics definitions; hot-label agreement measured in the dashboard
+
+**Decision:** `GET /api/analytics/summary` and `/costs?days=7|30|90` (and any
+1-365), shown on a new Analytics page. Periods use the business time zone.
+- **First response:** from the customer's first message, or from the lead
+  form, to our first reply.
+- **Wrote back:** the customer wrote after our first message.
+- **Qualified / hot:** score at or above the Settings thresholds.
+- **Re-engaged:** the customer wrote within 7 days after a follow-up.
+- **Costs:** estimates from the rate card, per day, channel and kind of
+  message, per lead, per qualified lead and per sale, plus what the free
+  72-hour ad window saved.
+The third target in proposal Section 9 (the salesperson agrees with "hot" for
+at least 80% of hot leads) is measured with a one-tap "Is this lead really
+hot?" on hot leads.
+
+**Docs updated:** Spec Rev 7 Section 3.2; proposal Rev 6 Section 9.
+
+---
+
+## D-034 - 2026-10-18 - Week 5 - Evaluation harness and how its results are reported
+
+**Decision:** `python -m scripts.evaluate` replays labelled comments and
+messages through the real agents with the model configured in `.env`. It
+builds a throwaway database from the catalog and sends nothing. It writes a
+report to `data/eval/reports/`. Comments are scored on the action taken
+(reply, complaint, hide, ignore), because "purchase interest" and "product
+question" lead to the same action; exact intent is reported too. Bundled sets
+are synthetic: 82 cases used to find problems, and 24 held-out cases written
+afterwards and run once. With keyword rules only, the held-out first run
+scored: comment action 75%, product answers 92.9%, opt-out 1 of 3 recognised,
+no wrong prices, no false opt-outs. These are the honest generalisation
+figures for the rules (Week 5 run log). The real test is the business's own
+50-100 messages with the chosen Ollama model (`data/eval/README.md`).
+Messages in Hindi or Tamil script are handed to a person by the built-in
+search; the multilingual embedding model is the fix (D-008).
+
+**Docs updated:** Spec Rev 7 Sections 5, 10; proposal Rev 6 Section 9.
+
+---
+
+## D-035 - 2026-10-18 - Week 5 - Fixes from the evaluation and the browser run
+
+Each has a regression test.
+1. **Complaints and order problems in a DM got a product list** ("the mixer
+   stopped working", "my order hasn't arrived", "do you repair mixers?"). They
+   are a handoff trigger in spec Section 10 but only comments had it. Now the
+   assistant apologises, hands over and alerts.
+2. "2 mixer" was not read as a quantity: a small number right before a word
+   naming a found product now counts.
+3. Comments: "Beautiful colour" was read as a question ("colour" and "size"
+   alone no longer count). Added "visit my page" to spam, and "leaks",
+   "overheats" and "order innum varala" / "abhi tak nahi aaya" to complaints.
+4. Opt-out rule widened (D-030), with tests for false opt-outs.
+5. Analytics: a lead-form customer who wrote back later was counted as
+   "never answered".
+6. The Settings list of planned follow-ups showed the worker's last schedule,
+   up to 10 minutes old (empty right after the demo); it is now worked out
+   live.
+7. The opt-in message asked two questions at once (D-031).
+8. The inbox showed a follow-up as "[template nurture_followup_1] Arjun |
+   PowerChef..."; it now says "Follow-up: Check-in template", and the
+   conversation shows the template text the customer received.
+9. Erased leads still offered "Take over"; the phone Analytics page left an
+   empty cell; "0 s" now reads "under 1 s".
+
+**Docs updated:** Spec Rev 7 Section 10.

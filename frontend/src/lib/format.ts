@@ -116,7 +116,9 @@ export function displayName(lead: {
   name: string | null;
   contact_phone: string | null;
   preferred_channel?: Channel | null;
+  erased_at?: string | null;
 }): string {
+  if (lead.erased_at) return "Erased customer";
   if (lead.name) return lead.name;
   if (lead.contact_phone) return lead.contact_phone;
   if (lead.preferred_channel === "instagram") return "Instagram customer";
@@ -133,6 +135,8 @@ export function handlerText(lead: { is_human_takeover: boolean; assigned_to: str
 
 /** One-line preview: the catalog list reply becomes "Options: A, B, Which one?". */
 export function previewText(text: string): string {
+  const template = text.match(/^\[template ([^\]]+)\]/);
+  if (template) return `${TEMPLATE_LABEL[template[1]] ?? template[1]} template`;
   const lines = text
     .split("\n")
     .map((l) => l.replace(/^•\s*/, "").trim())
@@ -173,4 +177,78 @@ export function rationaleLines(rationale: string | null): { text: string; points
  */
 export function byTime(a: { at: string }, b: { at: string }): number {
   return Date.parse(a.at) - Date.parse(b.at);
+}
+
+/** A WhatsApp template body with {{1}}, {{2}}... filled in (missing values stay visible). */
+export function fillTemplate(body: string, params: string[]): string {
+  return body.replace(/\{\{\s*(\d+)\s*\}\}/g, (whole, n: string) => params[Number(n) - 1] ?? whole);
+}
+
+/** "Tue 21 Oct, 10:00 am" in the viewer's time zone. */
+export function dateTime(iso: string): string {
+  const t = new Date(iso);
+  const day = t.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
+  return `${day}, ${clockTime(iso)}`;
+}
+
+export const TEMPLATE_LABEL: Record<string, string> = {
+  nurture_followup_1: "Check-in",
+  nurture_offer: "Offer",
+  nurture_last_check: "Last reminder",
+  lead_form_welcome: "Welcome",
+};
+
+const OPT_IN_SOURCE: Record<string, string> = {
+  lead_form: "on the lead form",
+  ctwa_message: "said yes in the chat",
+  dm: "said yes in the chat",
+  keyword: "sent START",
+  manual: "added by hand",
+};
+
+/** What the customer agreed to, for the lead panel. */
+export function consentText(lead: {
+  opted_out: boolean;
+  opted_out_at: string | null;
+  whatsapp_opt_in: boolean;
+  opt_in_source: string | null;
+  opt_in_at: string | null;
+  opt_in_asked_at: string | null;
+  contact_phone: string | null;
+}): string {
+  if (lead.opted_out) {
+    const when = lead.opted_out_at ? ` on ${shortDate(lead.opted_out_at)}` : "";
+    return `Opted out${when}. You can still reply if they write to you.`;
+  }
+  if (lead.whatsapp_opt_in) {
+    const how = lead.opt_in_source ? OPT_IN_SOURCE[lead.opt_in_source] ?? lead.opt_in_source : "";
+    const when = lead.opt_in_at ? `, ${shortDate(lead.opt_in_at)}` : "";
+    return `Agreed${how ? ` (${how}${when})` : ""}`;
+  }
+  if (!lead.contact_phone) return "No WhatsApp number";
+  if (lead.opt_in_asked_at) return "Asked in the chat, no yes yet";
+  return "Not asked yet";
+}
+
+export function shortDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+}
+
+/** "4 s", "1 min 5 s", "2 h 10 min" */
+export function duration(seconds: number | null | undefined): string {
+  if (seconds == null) return "-";
+  if (seconds < 1) return "under 1 s";
+  const s = Math.round(seconds);
+  if (s < 60) return `${s} s`;
+  if (s < 3600) {
+    const m = Math.floor(s / 60);
+    return `${m} min${s % 60 ? ` ${s % 60} s` : ""}`;
+  }
+  const h = Math.floor(s / 3600);
+  const m = Math.round((s % 3600) / 60);
+  return `${h} h${m ? ` ${m} min` : ""}`;
+}
+
+export function pct(value: number | null | undefined): string {
+  return value == null ? "-" : `${Number.isInteger(value) ? value : value.toFixed(1)}%`;
 }

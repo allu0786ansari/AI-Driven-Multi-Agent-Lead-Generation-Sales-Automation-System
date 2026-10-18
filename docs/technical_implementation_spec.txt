@@ -1,8 +1,30 @@
 TECHNICAL IMPLEMENTATION SPECIFICATION
 AI-Driven Multi-Agent Lead Generation & Sales Automation System
 ==================================================================
-Revision 6 - 15 October 2026 (Week 4 build)
+Revision 7 - 18 October 2026 (Week 5 build)
 (Companion document to: project_proposal_ai_lead_gen_agent.txt)
+
+
+REVISION 7 NOTES (changes made during the Week 5 build - see
+docs/DECISIONS.md D-029 to D-035 for the reasons)
+----------------------------------------------------------------
+- Section 1: no APScheduler; follow-ups run in the existing worker loop.
+  tzdata added (business hours in Asia/Kolkata on Windows).
+- Section 2: Nurture Agent, consent handling, analytics and evaluation
+  harness described as built.
+- Section 3.2: personal-data erasure, analytics summary/costs, follow-up
+  settings and planned list, hot-label feedback; lead detail gains
+  follow_up, opt_in_asked_at, hot_feedback.
+- Section 3.3: actual Week 5 interfaces (nurture, consent, erase,
+  analytics).
+- Section 4: leads.opt_in_asked_at, leads.erased_at; last_inbound_at now
+  covers every channel; messages.sender "nurture"; business_settings key
+  "nurture"; opt_in_source "keyword".
+- Section 9: what opting out means (business-started messages stop;
+  customer-started conversations are answered; START opts back in).
+- Section 10: complaints and order problems in DMs hand off; one-time
+  opt-in question; opt-out matching; evaluation harness and results.
+- Section 11: erasure implemented.
 
 
 REVISION 6 NOTES (changes made during the Week 4 build - see
@@ -120,7 +142,9 @@ Vector store:          product_embeddings table in the main database,
 Database:              SQLite (prototype) -> Postgres
 Sheets mirror:         CSV file (default, opens in Excel) or Google Sheets
                        API with a service-account key (Rev 5, D-020)
-Scheduler:             APScheduler
+Scheduler:             The background worker runs the follow-up pass every
+                       NURTURE_CHECK_MINUTES (Rev 7, D-029; no APScheduler).
+                       Business hours in BUSINESS_TIMEZONE (tzdata package)
 Alerts:                SMTP email and/or Telegram Bot API; ALERTS_MODE=log
                        (default) only logs them and lists them in
                        GET /api/notifications (Rev 5)
@@ -177,8 +201,15 @@ Logging:               Structured JSON logs with a per-lead trace ID;
   why, take over / hand back, reply through the Send Gate, status,
   assignment), alerts, product catalog, settings, webhook activity; live
   updates over WebSocket; phone layout. Analytics tab in Week 5.
-- Evaluation harness: replays a labelled set of real messages through the
-  agents and reports accuracy; run before every model/prompt change.
+- Nurture Agent (Rev 7, D-029): every NURTURE_CHECK_MINUTES the worker
+  sends due follow-up templates to opted-in customers who went quiet,
+  within business hours, capped, stopping when they write.
+- Consent handling (Rev 7, D-030, D-031): opt-out words and buttons in the
+  customers' languages, START, and the one-time WhatsApp opt-in question.
+- Analytics (Rev 7, D-033): summary and cost numbers for the dashboard.
+- Evaluation harness (Rev 7, D-034): scripts/evaluate.py replays labelled
+  comments and messages through the real agents and reports against the
+  proposal's targets; run before every model/prompt change.
 
 
 3. BACKEND API CONTRACT (FastAPI endpoints)
@@ -292,9 +323,22 @@ Logging:               Structured JSON logs with a per-lead trace ID;
         message}. Sender "salesperson"; idempotency key
         manual:<client_message_id>; sending takes the conversation over.
 
-  DELETE /api/leads/{lead_id}/personal-data       (moved to Week 5, D-027)
+  DELETE /api/leads/{lead_id}/personal-data       (Rev 7, D-032)
       - Erases a lead's personal data on request (keeps an anonymised row
         for analytics)
+      - Removes name, phone, email, platform IDs, summary and details,
+        message text and payloads, matching raw webhook events and alert
+        texts; cancels queued messages; marks the lead opted out; sets
+        erased_at. Returns {erased_at, messages, events, alerts,
+        cancelled}. 409 if already erased.
+
+  POST /api/leads/{lead_id}/feedback               (Rev 7, D-033)
+      - {agree: bool}: does the salesperson agree the lead is hot?
+        Recorded in lead_activity; measured on the Analytics page.
+
+  Lead detail (GET /api/leads/{id}) gains (Rev 7): follow_up {due_at,
+  template, sent, reason}, opt_in_asked_at, hot_feedback; summaries gain
+  erased_at.
 
   GET  /api/products/search?q=...&top_k=5        (Rev 4)
       - Runs the same product search the agents use and shows scores
@@ -343,10 +387,33 @@ Logging:               Structured JSON logs with a per-lead trace ID;
   GET /api/analytics/summary
       - Leads captured (today/week), conversion rate, median response
         time, lead source breakdown, reply rate
+      - Rev 7 (D-033): ?days=1-365 (business time zone). Returns leads
+        (total, today, last 7 days, by source/channel/status), daily
+        [{date, leads, hot}], funnel (captured, replied, qualified, hot,
+        bought), rates, first_response (median, p95, % within 60 s,
+        unanswered), handoffs, follow_ups (sent, re-engaged, opt-ins by
+        source, opt-outs), hot_label_feedback (agreement vs 80% target).
 
   GET /api/analytics/costs
       - Estimated messaging cost by day, channel, category and per
         qualified lead
+      - Rev 7: ?days=; total, daily, by_channel, by_category {messages,
+        cost}, per_lead, per_qualified_lead, per_bought_lead,
+        saved_by_free_entry_window.
+
+  GET  /api/settings/nurture
+  PUT  /api/settings/nurture                    (Rev 7, D-029)
+      - {enabled, steps: [{after_days, template, params: [first_name |
+        product | offer]}], offer_text, max_per_lead, max_quiet_days,
+        send_from_hour, send_until_hour}. Steps must be in increasing
+        order (422 otherwise); steps needing an offer are skipped while
+        offer_text is empty. Saving recalculates every lead's schedule.
+
+  GET  /api/nurture/upcoming                    (Rev 7)
+      - Next follow-ups, worked out now (earliest first), and the number
+        sent in the last 7 days.
+  POST /api/nurture/run                         (Rev 7)
+      - Run a follow-up pass now; returns {sent, scheduled, done, ...}.
 
   WS /ws/notifications
       - Real-time "new hot lead", "lead replied", "handoff requested",
@@ -379,7 +446,15 @@ Logging:               Structured JSON logs with a per-lead trace ID;
       -> ScoreResult            # pure function, no LLM
   alerts.notify(session, lead, kind, reason, idempotency_key, last_message)
   sheets.sync_all() -> int      # leads mirror (worker, periodic)
-  nurture_agent.run_daily_check() -> list[LeadRecord]   (scheduled job)
+  nurture.run_nurture(as_of=None, user_id=None, now=None) -> counts
+      # Rev 7: worker pass; sends due follow-ups, schedules the rest
+  nurture.next_follow_up(session, lead, config, now) -> FollowUp
+      # due_at, step, template, sent, reason (why none)
+  consent.is_opt_out(text) / is_opt_back_in(text) / yes_or_no(text)
+  consent.record_opt_in(session, lead, source, wording, channel)
+  slots.needs_support(text) -> bool   # complaint / order problem -> handoff
+  erase.erase_personal_data(session, lead, actor) -> EraseResult
+  analytics.summary(session, user_id, days) / analytics.costs(...)
   rag.get_product_context(session, user_id, query, top_k=3,
       filters: ProductFilters | None = None) -> list[RetrievedProduct]
   responder.generate_product_reply(session, lead, customer_text)
@@ -438,19 +513,25 @@ migration of existing rows.
   is_human_takeover       - boolean; blocks automated sends when true
   conversation_summary    - short LLM-generated summary
   whatsapp_opt_in         - boolean
-  opt_in_source           - lead_form | ctwa_message | dm | manual
+  opt_in_source           - lead_form | ctwa_message | dm | manual |
+                            keyword (sent START - Rev 7)
+  opt_in_asked_at         - when the assistant asked for WhatsApp opt-in
+                            in the chat (asked once - Rev 7, D-031)
   opt_in_at               - timestamp
   opted_out               - boolean; checked by the Send Gate before any
                             send
   opted_out_at            - timestamp
-  last_inbound_at         - timestamp of the lead's latest message
+  last_inbound_at         - timestamp of the lead's latest message (any
+                            channel, comments included - Rev 7)
   service_window_expires_at     - last_inbound_at + 24h (WhatsApp)
   free_entry_window_expires_at  - 72h free entry window end, if open
-  nurture_step            - position in the follow-up sequence
+  nurture_step            - position in the follow-up sequence (99 = done
+                            until the customer writes again - Rev 7)
   nurture_next_at         - when the next follow-up is due
   messaging_cost_estimate - running total, in INR
   created_at              - timestamp of first contact
   last_activity_at        - timestamp of most recent message either way
+  erased_at               - personal data erased on request (Rev 7, D-032)
 
 4.2 products (feeds the vector store)
   product_id, user_id, sku (business's own product code; unique per
@@ -463,7 +544,7 @@ migration of existing rows.
 4.3 messages (conversation log, one row per message, all channels)
   message_id, user_id, lead_id, channel (whatsapp | instagram |
   messenger), direction (inbound | outbound), sender (agent | lead |
-  salesperson | system), text, media_type (none | image | audio | ...),
+  salesperson | system | nurture (follow-ups, Rev 7)), text, media_type (none | image | audio | ...),
   platform_message_id, template_name (if a template), pricing_category
   (marketing | utility | service | free_entry | free), delivery_status
   (received for inbound; queued | sending | sent | delivered | read |
@@ -511,7 +592,8 @@ migration of existing rows.
 4.8 business_settings (Rev 5)
   user_id + key (primary key), value (JSON), updated_at. Keys:
   "qualification" (rules, see 3.2), "content_products" (post/ad -> SKU
-  links), "sheets_sync" (hash and row count of the last mirror write).
+  links), "sheets_sync" (hash and row count of the last mirror write),
+  "nurture" (follow-up rules - Rev 7).
 
 4.9 notifications (Rev 5, D-019)
   notification_id, user_id, lead_id, kind (hot_lead | handoff |
@@ -590,13 +672,19 @@ Week 4 - Dashboard (frontend)                        (done, Rev 6)
     webhook activity page, assignment, lead activity, phone layout,
     demo conversations, unit + browser tests
 
-Week 5 - Nurture, analytics, evaluation
-  - APScheduler nurture job: opted-in leads only, capped follow-ups
+Week 5 - Nurture, analytics, evaluation             (done, Rev 7)
+  - Nurture job (in the worker, not APScheduler): opted-in leads only,
+    capped follow-ups
   - Opt-out handling verified across channels and languages
   - DELETE /api/leads/{id}/personal-data (moved from Week 4, D-027)
   - Analytics summary + cost endpoints and dashboard tab
   - Full evaluation harness run; fix prompts/model choice against targets
-  - Stretch: Meta feedback worker (Conversions API for CRM)
+    (built and run with keyword rules; the Ollama run and the business's
+    real messages are on the stakeholder's machine - D-034)
+  - Stretch: Meta feedback worker (Conversions API for CRM) - moved to
+    Week 6
+  - Also built: one-time WhatsApp opt-in question, START, complaint
+    handoff in DMs, hot-label feedback, follow-up settings page
 
 Week 6 - Buffer / stakeholder demo prep
   - End-to-end tests: one full lifecycle per entry path (CTWA, lead form,
@@ -750,6 +838,10 @@ WhatsApp
 
   Rules:
   - Templates must be pre-approved and need recorded opt-in.
+  - Opt-out (Rev 7, D-030): an opt-out word or the template's stop button
+    stops every business-started message (follow-ups, templates)
+    immediately. A customer who writes again afterwards is answered in
+    that conversation (they started it); START opts back in.
   - Reply to CTWA messages within 24 hours, or the free entry window is
     lost.
   - Prefer one information-dense message over several short ones.
@@ -804,6 +896,18 @@ Instagram / Facebook
   qualifying question from the business's list.
 - Asking for a person ("call me", "talk to someone", "baat karni hai")
   hands off immediately with a short holding reply and an alert.
+- Complaints and order problems in DMs ("stopped working", "my order has
+  not arrived", "refund", "repair", "kharab", "innum varala") hand off the
+  same way, with an apology (Rev 7, D-035).
+- Opt-in in the chat (Rev 7, D-031): when no qualifying question is left,
+  a WhatsApp customer without opt-in is asked once, word for word, "Can
+  we send you offers and reminders on WhatsApp? Reply YES or NO."; a
+  YES-type answer to that message is recorded with the wording.
+- Opt-out matching (Rev 7, D-030): whole message after removing
+  punctuation, emoji and polite fillers, in English, Hindi, Hinglish,
+  Tamil and Tanglish, plus short "stop/unsubscribe/don't send ...
+  messages/offers" messages; never when the message is about an order or
+  a product.
 - Scope: system prompt restricts the agent to the business's products,
   orders and policies; unrelated requests get a polite decline.
 - Prompt injection: customer text is placed in clearly delimited user
@@ -817,6 +921,13 @@ Instagram / Facebook
 - Evaluation set: 50-100 real labelled messages (intent, expected product,
   expected handoff). Run the harness on every model or prompt change.
   Targets are in proposal Section 9.
+- Evaluation harness (Rev 7, D-034): python -m scripts.evaluate. Comments
+  are scored on the action taken (reply / complaint / hide / ignore).
+  Week 5 results with keyword rules only: sample set (82 cases, used to
+  find problems) all targets met; held-out set (24 cases, first run)
+  comment action 75%, product answers 92.9%, opt-out 1/3 with no false
+  opt-outs, no wrong prices. Hindi/Tamil-script product questions need the
+  multilingual embedding model (D-008); until then they are handed off.
 - Every LLM call is logged (prompt version, model, latency, output) for
   debugging, with personal data masked.
 
@@ -837,4 +948,5 @@ Instagram / Facebook
 - Personal data masked in logs; Sheets mirror shared only with named
   salesperson accounts.
 - Data erasure endpoint (Section 3.2) and retention period agreed with the
-  stakeholder.
+  stakeholder. Erasure implemented in Week 5 (D-032); the retention
+  period is still to be agreed.

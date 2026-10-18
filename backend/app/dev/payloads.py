@@ -65,16 +65,38 @@ def whatsapp_text(
     name: str = "Test Customer",
     msg_id: str | None = None,
     referral: dict[str, Any] | None = None,
+    at: int | None = None,
 ) -> dict[str, Any]:
+    """`at`: Unix time the customer sent it (default now)."""
     message: dict[str, Any] = {
         "from": from_phone,
         "id": msg_id or _rid("wamid.TEST"),
-        "timestamp": str(_now()),
+        "timestamp": str(at or _now()),
         "type": "text",
         "text": {"body": text},
     }
     if referral:
         message["referral"] = referral
+    return _wa_envelope(
+        {"contacts": [{"profile": {"name": name}, "wa_id": from_phone}], "messages": [message]}
+    )
+
+
+def whatsapp_button(
+    from_phone: str = "919876543210",
+    text: str = "Stop promotions",
+    name: str = "Test Customer",
+    at: int | None = None,
+) -> dict[str, Any]:
+    """The customer tapped a quick-reply button of a template (e.g. the marketing opt-out button)."""
+    message = {
+        "from": from_phone,
+        "id": _rid("wamid.BTN"),
+        "timestamp": str(at or _now()),
+        "type": "button",
+        "button": {"text": text, "payload": text.upper().replace(" ", "_")},
+        "context": {"from": DEFAULT_DISPLAY_PHONE, "id": _rid("wamid.TPL")},
+    }
     return _wa_envelope(
         {"contacts": [{"profile": {"name": name}, "wa_id": from_phone}], "messages": [message]}
     )

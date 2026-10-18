@@ -167,6 +167,15 @@ def demo_conversations() -> Iterator[tuple[str, dict[str, Any], bool]]:
             ),
             True,
         ),
+        (
+            "arjun: details",  # nothing left to ask -> the assistant asks once for WhatsApp opt-in
+            lambda: p.whatsapp_text(
+                "919845012345", "2 chahiye, Pune delivery, budget 12000", name="Arjun Mehta"
+            ),
+            True,
+        ),
+        ("arjun: yes to offers", lambda: p.whatsapp_text("919845012345", "Haan", name="Arjun Mehta"), True),
+        ("form lead: opted in", lambda: p.leadgen(leadgen_id="555000111"), False),
         ("lakshmi: voice", lambda: p.whatsapp_audio("919884055667", name="Lakshmi R"), False),
         (
             "rahul: fb complaint",

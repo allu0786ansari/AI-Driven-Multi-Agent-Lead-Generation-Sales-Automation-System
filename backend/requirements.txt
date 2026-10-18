@@ -9,3 +9,5 @@ PyJWT>=2.15,<3.0
 bcrypt>=5.0,<6.0
 httpx>=0.28,<1.0
 python-multipart>=0.0.32,<0.1
+# Time zone data (Windows has no built-in IANA database; needed for Asia/Kolkata)
+tzdata>=2025.2

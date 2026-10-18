@@ -52,7 +52,9 @@ export function Composer({ lead }: { lead: LeadDetail }) {
   if (!option) {
     return (
       <div className="border-t border-rule bg-sheet px-4 py-4 text-sm text-ink-2 md:px-8">
-        There is no way to message this customer yet. They need to write to you on WhatsApp, Instagram or Messenger first.
+        {lead.erased_at
+          ? "This customer's personal data was erased, so no messages can be sent."
+          : "There is no way to message this customer yet. They need to write to you on WhatsApp, Instagram or Messenger first."}
       </div>
     );
   }

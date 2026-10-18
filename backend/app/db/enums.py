@@ -37,6 +37,7 @@ class Sender(StrEnum):
     LEAD = "lead"
     SALESPERSON = "salesperson"
     SYSTEM = "system"  # automatic holding / confirmation messages (not subject to takeover)
+    NURTURE = "nurture"  # scheduled follow-up templates (Week 5); paused by takeover like the agent
 
 
 class PricingCategory(StrEnum):
@@ -78,6 +79,7 @@ class OptInSource(StrEnum):
     CTWA_MESSAGE = "ctwa_message"
     DM = "dm"
     MANUAL = "manual"
+    KEYWORD = "keyword"  # the customer sent START after opting out (Week 5)
 
 
 class StockStatus(StrEnum):

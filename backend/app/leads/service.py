@@ -17,7 +17,13 @@ from sqlalchemy.orm import Session
 from app.db.base import utcnow
 from app.db.enums import Channel, Direction, LeadStatus, PricingCategory, Sender
 from app.db.models import Lead, LeadActivity, Message, Notification
-from app.messaging.send_gate import OutboundContent, SendResult, last_inbound_at, queue_message
+from app.messaging.send_gate import (
+    OutboundContent,
+    SendResult,
+    last_inbound_at,
+    queue_message,
+    wrote_after_opt_out,
+)
 
 DM_WINDOW = timedelta(hours=24)
 CLOSED_STATUSES = (LeadStatus.CONVERTED, LeadStatus.LOST)
@@ -93,19 +99,33 @@ class ReplyOption:
 
 
 def reply_options(session: Session, lead: Lead, now: datetime | None = None) -> list[ReplyOption]:
+    """What the salesperson may send now, per channel (same rules as the Send Gate).
+
+    A customer who opted out can still be answered after they write again
+    (D-030), but never sent a template.
+    """
     now = now or utcnow()
     options: list[ReplyOption] = []
-    opted_out = "This customer opted out of messages." if lead.opted_out else ""
+    if lead.erased_at is not None:
+        return options
+    opted_out = ""
+    if lead.opted_out and not wrote_after_opt_out(lead):
+        opted_out = "This customer opted out. You can reply if they write to you again."
 
     if lead.contact_phone:
         until = lead.service_window_expires_at
         open_ = until is not None and until > now
-        reason = opted_out or (
-            ""
-            if open_
-            else "More than 24 hours since their last WhatsApp message. Send an approved template."
+        if opted_out:
+            reason = opted_out
+        elif open_:
+            reason = ""
+        elif lead.opted_out:
+            reason = "More than 24 hours since their last WhatsApp message, and they opted out of templates."
+        else:
+            reason = "More than 24 hours since their last WhatsApp message. Send an approved template."
+        options.append(
+            ReplyOption(Channel.WHATSAPP, open_ and not opted_out, not lead.opted_out, until, reason)
         )
-        options.append(ReplyOption(Channel.WHATSAPP, open_ and not opted_out, not opted_out, until, reason))
 
     for channel, scoped in (
         (Channel.INSTAGRAM, lead.instagram_scoped_id),
@@ -213,6 +233,14 @@ def unread_alert_counts(session: Session, user_id: str, lead_ids: list[str]) -> 
         .group_by(Notification.lead_id)
     ).all()
     return dict(rows)
+
+
+def hot_feedback(activity: list[LeadActivity]) -> bool | None:
+    """The salesperson's latest answer to "is this lead really hot?"."""
+    for a in reversed(activity):
+        if a.kind == "feedback":
+            return bool(a.detail.get("agree"))
+    return None
 
 
 def needs_you_condition():  # noqa: ANN201

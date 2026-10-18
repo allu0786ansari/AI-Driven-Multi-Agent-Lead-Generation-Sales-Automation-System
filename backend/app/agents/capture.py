@@ -92,6 +92,18 @@ def extract_whatsapp_text(msg: dict[str, Any]) -> tuple[str | None, str]:
     return caption, kind
 
 
+def customer_wrote(lead: Lead, at: datetime) -> None:
+    """The customer sent something (any channel, comments included).
+
+    Ends the current follow-up sequence: a new one starts if they go quiet again
+    (docs/DECISIONS.md D-029).
+    """
+    if lead.last_inbound_at is None or at > lead.last_inbound_at:
+        lead.last_inbound_at = at
+        lead.nurture_step = 0
+        lead.nurture_next_at = None
+
+
 def capture_whatsapp_message(session: Session, user_id: str, payload: dict[str, Any]) -> CaptureResult:
     msg = payload["message"]
     phone = normalize_phone("+" + str(msg.get("from", "")))
@@ -117,9 +129,9 @@ def capture_whatsapp_message(session: Session, user_id: str, payload: dict[str, 
     if lead.source is None:
         lead.source = LeadSource.CTWA_AD if referral.get("ctwa_clid") else LeadSource.DM
 
-    if lead.last_inbound_at is None or sent_at > lead.last_inbound_at:
-        lead.last_inbound_at = sent_at
+    if lead.service_window_expires_at is None or sent_at + SERVICE_WINDOW > lead.service_window_expires_at:
         lead.service_window_expires_at = sent_at + SERVICE_WINDOW
+    customer_wrote(lead, sent_at)
     lead.last_activity_at = utcnow()
 
     text, media_type = extract_whatsapp_text(msg)
@@ -310,6 +322,7 @@ def capture_comment(session: Session, user_id: str, info: CommentInfo) -> Captur
     if created or not lead.source_detail:
         lead.source_detail = f"{where} comment on post {info.post_id or '?'}"
     lead.last_activity_at = utcnow()
+    customer_wrote(lead, info.created_at)
     message = Message(
         user_id=user_id,
         lead_id=lead.lead_id,
@@ -352,6 +365,7 @@ def capture_meta_message(
     sent_at = datetime.fromtimestamp(int(ts) / 1000, UTC) if ts else utcnow()
     lead.preferred_channel = lead.preferred_channel or channel
     lead.last_activity_at = utcnow()
+    customer_wrote(lead, sent_at)
     message = Message(
         user_id=user_id,
         lead_id=lead.lead_id,

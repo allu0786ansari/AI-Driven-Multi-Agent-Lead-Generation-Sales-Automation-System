@@ -105,9 +105,14 @@ interested, just reply and we'll help you. Thank you!
 ```
 - Quick-reply buttons: `I'm interested` · `Stop messages`
 
-The `Stop messages` button is the opt-out; the Nurture Agent (Week 5) marks
-the lead `opted_out` when it is tapped or when the lead types an opt-out
-word.
+The `Stop messages` button is the opt-out. If you add Meta's own
+marketing opt-out button instead (its text is `Stop promotions`), that works
+too. A tap, or an opt-out word typed by the customer, marks the lead opted out
+at once (Week 5, D-030).
+
+The follow-ups (`nurture_*`) are sent automatically from Week 5 to customers
+who agreed to offers and went quiet. Their timing, the offer text and the
+sending hours are on the dashboard's Settings page.
 
 ## 5. Opt-in wording
 
@@ -123,15 +128,25 @@ so keep a copy of every version used.
 
 ### Click-to-WhatsApp and DMs
 
-The customer starts the conversation, so replies are allowed. Before sending
-any *marketing template* later (nurture), the agent asks once in the chat,
-for example: "Can we send you offers and reminders on WhatsApp? Reply YES or
-NO." A YES is recorded as opt-in with source `ctwa_message` or `dm`.
+The customer starts the conversation, so replies are allowed. Templates
+need opt-in, so once the customer has answered the qualifying questions the
+assistant asks once (Week 5, D-031):
 
-### Opt-out words (to confirm with the stakeholder)
+> Can we send you offers and reminders on WhatsApp? Reply YES or NO.
 
-`STOP`, `UNSUBSCRIBE`, `CANCEL`, `BAND`, `BAND KARO`, plus the equivalents
-in each language customers write in.
+A YES (yes, ok, haan, हाँ, சரி, ...) is recorded as opt-in with this wording
+and source `ctwa_message` or `dm`. It is asked only while follow-ups are
+switched on.
+
+### Opt-out words (Week 5, D-030 - tell us any your customers use)
+
+Whole message: `STOP`, `UNSUBSCRIBE`, `CANCEL`, `OPT OUT`, `STOP MESSAGES`,
+`STOP PROMOTIONS`, `NO MORE MESSAGES`, `BAND`, `BAND KARO`, `MAT BHEJO`,
+`बंद करो`, `मत भेजो`, `NIRUTHU`, `நிறுத்து`, `ANUPA VENDAM`, and short
+messages such as "stop sending these offers" or "unsubscribe me". Messages
+about an order ("cancel my order") never count. `START` subscribes again.
+After an opt-out the customer gets no follow-ups or templates; if they write
+to you again, that conversation is answered.
 
 ## 6. Ollama on the Windows machine (optional until Week 2)
 

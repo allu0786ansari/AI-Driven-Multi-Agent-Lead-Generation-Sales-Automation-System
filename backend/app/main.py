@@ -15,11 +15,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import __version__
 from app import handlers as _handlers  # noqa: F401 - registers event handlers with the router
 from app.api.leads import router as leads_router
+from app.api.notifications import router as notifications_router
+from app.api.products import router as products_router
+from app.api.settings_api import router as settings_router
 from app.api.system import router as system_router
+from app.api.templates import router as templates_router
+from app.api.ws import router as ws_router
 from app.auth.routes import router as auth_router
 from app.config import get_settings
 from app.db.session import get_engine
 from app.logging_config import configure_logging, new_trace_id, trace_id_var
+from app.web import mount_dashboard
 from app.webhooks.routes import router as webhooks_router
 from app.worker.processor import Worker
 
@@ -80,7 +86,13 @@ def create_app() -> FastAPI:
     app.include_router(system_router)
     app.include_router(auth_router)
     app.include_router(leads_router)
+    app.include_router(products_router)
+    app.include_router(settings_router)
+    app.include_router(notifications_router)
+    app.include_router(templates_router)
     app.include_router(webhooks_router)
+    app.include_router(ws_router)
+    mount_dashboard(app, settings.frontend_dist)  # last: catch-all for the React app
     return app
 
 

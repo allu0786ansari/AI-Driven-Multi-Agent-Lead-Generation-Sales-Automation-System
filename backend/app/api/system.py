@@ -57,6 +57,7 @@ class EventOut(BaseModel):
     status: str
     attempts: int
     error: str | None
+    result_note: str | None  # what the handler did (Week 2); was missing from the API until Week 4
     trace_id: str
     received_at: datetime
     processed_at: datetime | None

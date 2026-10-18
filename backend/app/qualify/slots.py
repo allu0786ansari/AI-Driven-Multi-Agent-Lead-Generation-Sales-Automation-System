@@ -48,6 +48,12 @@ class QualifySlots(BaseModel):
 _QTY = [
     re.compile(r"\b(\d{1,4})\s*(?:pcs|pc|pieces?|units?|nos|items?|sets?|qty|chahiye|venum|vendum)\b", re.I),
     re.compile(r"\b(?:qty|quantity)\s*[:=-]?\s*(\d{1,4})\b", re.I),
+    # "Need 2, one for my mother" (found in the Week 4 run); not sizes or money: "need 6L", "want 2 litre"
+    re.compile(
+        r"\b(?:need|want|order|buy|take|book)\s+(\d{1,3})\b"
+        r"(?!\s*(?:k\b|rs\b|inr\b|rupees?|₹|l\b|ltrs?|lit(?:re|er)s?|kg|w\b|watts?|%|/|-|\.\d|,\d|th\b))",
+        re.I,
+    ),
 ]
 # "later" is checked first so "not now" is not read as "now".
 _TIMELINE: list[tuple[Timeline, re.Pattern[str]]] = [

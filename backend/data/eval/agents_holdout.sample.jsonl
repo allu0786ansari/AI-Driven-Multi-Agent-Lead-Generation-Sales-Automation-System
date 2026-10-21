@@ -1,0 +1,24 @@
+{"id": "x01", "kind": "comment", "lang": "en", "text": "Price pls", "intent": "product_question"}
+{"id": "x02", "kind": "comment", "lang": "en", "text": "Delivery to Hyderabad?", "intent": "product_question"}
+{"id": "x03", "kind": "comment", "lang": "en", "text": "😍😍 want", "intent": "purchase_interest"}
+{"id": "x04", "kind": "comment", "lang": "en", "text": "Got a broken one last time, never buying again", "intent": "complaint"}
+{"id": "x05", "kind": "comment", "lang": "en", "text": "Visit my page for cheap phones", "intent": "spam"}
+{"id": "x06", "kind": "comment", "lang": "en", "text": "Congrats on the new launch!", "intent": "other"}
+{"id": "x07", "kind": "comment", "lang": "en", "text": "Sizes?", "intent": "product_question"}
+{"id": "x08", "kind": "comment", "lang": "tanglish", "text": "ennoda order innum varala", "intent": "complaint"}
+{"id": "y01", "kind": "message", "lang": "en", "text": "mixer grinder price", "expect": {"skus": ["MG-750-3J", "MG-1000-4J"]}}
+{"id": "y02", "kind": "message", "lang": "en", "text": "Do you have a 4 litre air fryer?", "expect": {"skus": ["AF-4L-DIG"]}}
+{"id": "y03", "kind": "message", "lang": "hinglish", "text": "purifier price kya hai", "expect": {"skus": ["WP-RO-UV-8L"]}}
+{"id": "y04", "kind": "message", "lang": "en", "text": "what's the cheapest kettle", "expect": {"skus": ["EK-1.8-SS"]}}
+{"id": "y05", "kind": "message", "lang": "hinglish", "text": "hand blender kab available hoga?", "expect": {"skus": ["HB-400-SET"]}}
+{"id": "y06", "kind": "message", "lang": "en", "text": "induction stove 2000W", "expect": {"skus": ["IC-2000-TCH"]}}
+{"id": "y07", "kind": "message", "lang": "en", "text": "Do you sell gas stoves?", "expect": {"handoff": true}}
+{"id": "y08", "kind": "message", "lang": "en", "text": "I paid but didn't get any confirmation", "expect": {"handoff": true}}
+{"id": "y09", "kind": "message", "lang": "en", "text": "the kettle I bought leaks", "expect": {"handoff": true}}
+{"id": "y10", "kind": "message", "lang": "en", "text": "Need 3 kettles for my office, budget 4000", "expect": {"skus": ["EK-1.8-SS"], "slots": {"quantity": 3, "budget": 4000}}}
+{"id": "y11", "kind": "message", "lang": "en", "text": "air fryer with presets under 6000", "expect": {"skus": ["AF-4L-DIG"]}}
+{"id": "y12", "kind": "message", "lang": "en", "text": "stop sending these offers", "expect": {"opt_out": true}}
+{"id": "y13", "kind": "message", "lang": "en", "text": "Unsubscribe me", "expect": {"opt_out": true}}
+{"id": "y14", "kind": "message", "lang": "en", "text": "Can I stop the order and get a smaller one?", "expect": {"handoff": true, "opt_out": false}}
+{"id": "y15", "kind": "message", "lang": "ta", "text": "ஃப்ரிட்ஜ் இருக்கா?", "expect": {"handoff": true}}
+{"id": "y16", "kind": "message", "lang": "hinglish", "text": "1 piece 6L air fryer chahiye, delivery Mumbai", "expect": {"skus": ["AF-6L-WIN"], "slots": {"quantity": 1, "city": "Mumbai"}}}

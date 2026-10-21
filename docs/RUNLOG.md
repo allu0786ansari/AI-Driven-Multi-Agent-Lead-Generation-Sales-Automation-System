@@ -557,3 +557,172 @@ Delete `backend\data\e2e.db` afterwards. Open a new window (or
 Nurture follow-ups (opted-in leads only, capped), opt-out across channels and
 languages, erase a lead's personal data, analytics and costs page, and the
 full evaluation run.
+
+---
+
+## Week 5 - Follow-ups, consent, erasure, analytics, evaluation (2026-10-18) - branch `week-5`
+
+### What was built
+
+| Area | Files | Notes |
+|---|---|---|
+| Follow-ups (Nurture Agent) | `app/nurture/*`, `app/worker/processor.py` | Approved templates for customers who agreed to offers and went quiet: day 2 / 5 / 10, business hours only, stop when the customer writes, at most 6 per customer, never twice |
+| Consent | `app/agents/consent.py`, `app/agents/engage.py`, `app/messaging/send_gate.py` | Opt-out in English, Hindi, Hinglish, Tamil, Tanglish and the template's stop button; START opts back in; the assistant asks once for WhatsApp opt-in; customers who opted out are still answered when they write |
+| Complaints in DMs | `app/qualify/slots.py`, `app/agents/engage.py` | "It stopped working", "my order hasn't arrived": apology, a person takes over, alert |
+| Erase personal data | `app/leads/erase.py`, `DELETE /api/leads/{id}/personal-data` | Removes identity and message text everywhere; keeps an anonymous row for the numbers |
+| Analytics | `app/analytics/service.py`, `frontend/src/pages/Analytics.tsx` | Leads per day, from lead to sale, sources, first-reply speed, follow-ups and consent, hot-label agreement, costs |
+| Settings | `frontend/src/pages/Settings.tsx`, `/api/settings/nurture`, `/api/nurture/*` | Follow-up sequence, offer text, limits, sending hours, what is planned next, "Check now" |
+| Lead page | `frontend/src/pages/lead/*` | Next follow-up or why not, what the customer agreed to, "Is this lead really hot?", erase |
+| Evaluation | `scripts/evaluate.py`, `data/eval/*` | Replays labelled messages through the real agents and checks the proposal's targets; report in `data/eval/reports/` |
+| Command line | `scripts/nurture.py` | See planned follow-ups; send what would be due in N days (demo) |
+| Database | `alembic/versions/0005_*` | `leads.opt_in_asked_at`, `leads.erased_at` |
+| Docs | spec Rev 7, proposal Rev 6, DECISIONS D-029..D-035, meta_setup sections 4-5 | |
+
+### What now happens
+
+- **Customer goes quiet** (agreed to offers): 2 days later, between 10:00 and 19:00, they get the
+  "check-in" template; 10 days later the "last reminder" (the "offer" one too, once you set an
+  offer in Settings). Any message from them stops it; it starts again if they go quiet again.
+- **WhatsApp ad / DM customer** answers the qualifying questions -> the reply ends with
+  "Can we send you offers and reminders on WhatsApp? Reply YES or NO." -> "Haan" is recorded as
+  opt-in, with that wording.
+- **"band karo" / "STOP" / Stop button** -> no more follow-ups or templates. If they ask
+  something later, they get an answer. "START" -> subscribed again.
+- **"The mixer stopped working"** in a DM -> "Sorry to hear that! A member of our team will look
+  into it..." + handed to you + alert.
+- **Customer asks you to delete their data** -> lead page, "Erase personal data".
+
+### Test results (sandbox, before publishing)
+
+- `pytest`: **381 passed** on Python 3.13.16 and 3.11.17 (274 from Weeks 1-4 + 107 new).
+  - test_consent_nurture 80, test_webhooks 35, test_comments_dms 30, test_system 25, test_qualify 24, test_rag 23, test_week5_quality 21, test_dashboard_api 21, test_send_gate 18, test_capture 15, test_flows 15, test_guardrails 15, test_worker 11, test_auth 10, test_llm 10, test_alerts_sheets 9, test_catalog 9, test_erase_analytics 6, test_flows_week3 4
+  - 1 earlier test changed by design: after STOP, a later question from the customer is now answered (D-030).
+  - Mutation checks: removing the follow-up takeover rule, the "no templates after opt-out" rule, or the raw-event scrubbing each makes a test fail.
+- `ruff check` / `ruff format --check`: clean.
+- Dashboard: typecheck clean, **35 unit tests passed**, production build 391 kB JavaScript (120 kB gzipped).
+- **Browser test** (Playwright, desktop and phone), **10 passed**. This includes 3 new tests:
+  - Follow-ups: the planned list, then "Check now". The follow-up shows in Arjun's conversation as the template text he received, and his opt-in shows on the lead page.
+  - Analytics: the chart read with the keyboard, and the period switch.
+  - Erasing a customer's data.
+- **Migration on real data**: the Week 4 sandbox database (18 leads, 55 messages, 9 alerts, 57 events, 4 consent records) upgraded `0004 -> 0005` without loss.
+- **Live run** (`simulate demo`, then `scripts.nurture run --days-ahead 3`):
+  - Arjun was asked once, said "Haan", and the opt-in was recorded as `ctwa_message`.
+  - 2 follow-ups were planned and then delivered by the running server: Arjun's cost ₹0 (inside the free 72-hour ad window), the lead-form customer's ₹0.86.
+  - No server errors.
+- **Evaluation** (`python -m scripts.evaluate`, keyword rules only, no model; the sandbox cannot run Ollama):
+
+  | Check | Sample set, 82 cases | Held-out, 24 cases, first run | Target |
+  |---|---|---|---|
+  | Comment: right action | 36/36 (100%) | 6/8 (75%) | >= 90% |
+  | Message: right product, or handed to a person | 39/41 (95.1%) | 13/14 (92.9%) | >= 95% |
+  | No wrong price or invented offer | 41/41 | 14/14 | all |
+  | Opt-out recognised, no false opt-outs | 7/7 | 1/3 (no false ones) | all |
+
+  The sample set was used to find and fix problems, and the held-out set was written afterwards
+  and run once. Its first-run column is the honest picture of the keyword rules on new messages.
+  After the fixes in D-035 both sets pass, but the held-out set is no longer unseen.
+  The two sample misses are Hindi- and Tamil-script product questions. The built-in search
+  cannot read those scripts, so they are handed to a person, which is safe. The multilingual
+  embedding model fixes this (D-008).
+- **Found and fixed** (regression tests for each; details in D-035):
+  1. Complaints and order problems in DMs got a product list instead of a person.
+  2. "2 mixer" was not read as a quantity.
+  3. "Beautiful colour" was read as a question.
+  4. "Stop sending these offers" and "Unsubscribe me" were not opt-outs.
+  5. A lead-form customer who wrote back was counted as "never answered".
+  6. The planned follow-ups list in Settings was up to 10 minutes stale.
+  7. The opt-in message asked two questions at once.
+  8. Follow-ups showed as raw template values in the inbox.
+  9. Old leads would have received follow-ups right after the upgrade; customers quiet for more than 30 days now get none.
+  10. Small layout issues: erased leads, the phone Analytics page, "0 s".
+
+### Run it on Windows
+
+**1. Get Week 5** (after merging the Week 5 PR, or `git checkout week-5`)
+```powershell
+git checkout main
+git pull
+cd backend
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements-dev.txt     # adds tzdata (time zones on Windows)
+```
+
+**2. Settings** - copy the `# ---- Week 5 ----` block from `.env.example` to the
+end of your `.env` (business time zone, how often follow-ups are checked).
+
+**3. Upgrade and test**
+```powershell
+python -m alembic upgrade head      # Running upgrade 0004 -> 0005
+python -m pytest                    # 381 passed
+cd ..\frontend
+npm ci
+npm test                            # 35 passed
+npm run build
+cd ..\backend
+```
+
+**4. Try it**
+```powershell
+python -m uvicorn app.main:app --reload
+# second window (backend folder, venv active):
+python -m scripts.simulate demo
+python -m scripts.nurture                       # who gets a follow-up next, and why not the others
+python -m scripts.nurture run --days-ahead 3    # send what would be due in 3 days
+```
+Open http://127.0.0.1:8000:
+- **Leads -> All -> Arjun Mehta**: the assistant asked for opt-in, he said "Haan", and after the
+  `run` above his conversation shows the follow-up ("Hi Arjun, just checking in about..."). The
+  right panel shows "Agreed (said yes in the chat)" and "1 sent so far".
+- **Analytics**: leads per day, from lead to sale, speed, follow-ups, costs. Try 7 / 30 / 90 days.
+- **Settings -> Follow-ups**: the sequence, offer text, limits, hours, and what is planned next.
+- **meena.cooks** (hot): answer "Is this lead really hot?"; Analytics shows the agreement.
+- Opt-out and back in, as Arjun:
+  ```powershell
+  python -m scripts.simulate whatsapp --phone 919845012345 --text "band karo"
+  python -m scripts.simulate whatsapp --phone 919845012345 --text "mixer warranty kitna hai?"   # still answered
+  python -m scripts.simulate whatsapp --phone 919845012345 --text "START"
+  ```
+- A complaint in a DM:
+  `python -m scripts.simulate whatsapp --phone 919800000077 --text "the mixer I bought stopped working"`
+  -> apology, handed to you, alert.
+- **Erase**: open any lead, "Erase personal data" at the bottom of the right panel.
+
+**5. Run the evaluation**
+```powershell
+python -m scripts.evaluate                                                  # the 82-case sample set
+python -m scripts.evaluate --file data/eval/agents_holdout.sample.jsonl     # the 24 held-out cases
+```
+It uses the model in your `.env`. With `LLM_PROVIDER=ollama` (Ollama running, model pulled) it
+takes a few minutes on a CPU. The report is saved in `backend\data\eval\reports\`. Then collect
+50-100 of your own customers' real messages, label them as described in
+`backend\data\eval\README.md`, and run `--file` on them. That is the result that counts.
+
+**6. Before follow-ups go to real customers** - the four templates in `docs/meta_setup.md`
+section 4 must be approved in WhatsApp Manager. Until then keep `META_API_MODE=fake`, or switch
+follow-ups off in Settings.
+
+**7. Optional: browser tests** - as in Week 4, step 8 (`npm run e2e`, now 10 tests).
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `ZoneInfoNotFoundError` or "unknown time zone" at start | `pip install -r requirements-dev.txt` (installs `tzdata`); check `BUSINESS_TIMEZONE` |
+| Settings shows nothing planned | Only customers who agreed to offers get follow-ups; the lead page says why for each lead |
+| A follow-up shows "Not delivered" (live mode) | The template is not approved yet, or its name differs; check WhatsApp Manager and the names in Settings |
+| A customer gets no opt-in question | It is asked once all qualifying questions are answered, only on WhatsApp, only while follow-ups are on |
+| `scripts.evaluate` prints boxes instead of Hindi/Tamil | Use Windows Terminal; the report file is always correct UTF-8 |
+| Evaluation is slow with Ollama | Normal on CPU (one LLM call per message); try a smaller model, or run the held-out set first |
+
+### Your actions this week
+- Steps 1-4 on your PC; tell me if anything fails or looks wrong.
+- Submit the four templates (meta_setup section 4) for approval if you haven't yet.
+- Start collecting 50-100 real customer messages for the evaluation (no names or numbers).
+- With Ollama installed, run step 5 and send me the report: it decides the model choice.
+
+### Next: Week 6
+Buffer and demo preparation: one end-to-end run per entry path (ad, lead form, comment) through
+to Bought / Lost, failure drills (duplicate webhooks, model down, send failure, closed window,
+opted-out customer), the live demo with a test ad and comment, the final model choice from your
+evaluation report, known limitations and the next-phase plan. Stretch: send Bought / Lost back
+to Meta (Conversions API).

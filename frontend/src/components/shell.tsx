@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Bell, History, LogOut, MessagesSquare, Package, SlidersHorizontal } from "lucide-react";
+import { BarChart3, Bell, History, LogOut, MessagesSquare, Package, SlidersHorizontal } from "lucide-react";
 import type { ReactNode } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { api } from "../lib/api";
@@ -10,6 +10,7 @@ import type { Counts } from "../lib/types";
 const NAV = [
   { to: "/leads", label: "Leads", icon: MessagesSquare, badge: "needs" as const },
   { to: "/alerts", label: "Alerts", icon: Bell, badge: "alerts" as const },
+  { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/products", label: "Products", icon: Package },
   { to: "/settings", label: "Settings", icon: SlidersHorizontal },
   { to: "/activity", label: "Activity", icon: History },
@@ -89,7 +90,7 @@ export function Shell({ live }: { live: LiveState }) {
       </main>
 
       <nav className="flex shrink-0 border-t border-rule bg-sheet md:hidden" aria-label="Main">
-        {NAV.slice(0, 4).map((n) => link(n.to, n.label, n.icon, n.badge ? <Badge n={badges[n.badge]} hot={n.badge === "needs"} /> : null, true))}
+        {NAV.slice(0, 5).map((n) => link(n.to, n.label, n.icon, n.badge ? <Badge n={badges[n.badge]} hot={n.badge === "needs"} /> : null, true))}
       </nav>
     </div>
   );

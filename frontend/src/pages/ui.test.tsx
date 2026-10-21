@@ -69,6 +69,10 @@ const base: LeadDetail = {
   activity: [],
   reply_options: [{ channel: "whatsapp", free_text: true, templates: true, open_until: "2099-01-01T00:00:00Z", reason: "" }],
   default_channel: "whatsapp",
+  erased_at: null,
+  opt_in_asked_at: null,
+  follow_up: { due_at: null, template: null, sent: 0, reason: "No WhatsApp opt-in yet." },
+  hot_feedback: null,
 };
 
 describe("Composer", () => {

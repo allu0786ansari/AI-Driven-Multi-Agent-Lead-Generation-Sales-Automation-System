@@ -23,6 +23,7 @@ from app.db.models import InboundEvent
 from app.db.session import session_scope
 from app.logging_config import trace_id_var
 from app.messaging.outbox import deliver_pending
+from app.nurture.agent import run_nurture
 from app.router.dispatcher import dispatch
 from app.sheets.mirror import get_writer, sync_all
 
@@ -133,6 +134,7 @@ class Worker:
         self._sheets_writer = None
         self._sheets_disabled = False
         self._last_sheets_sync = 0.0
+        self._last_nurture = float("-inf")
 
     def _sync_sheets_if_due(self) -> None:
         """Runs in a worker thread. Rewrites the lead mirror at most every SHEETS_SYNC_SECONDS."""
@@ -150,6 +152,13 @@ class Worker:
                 log.error("sheets mirror disabled: %s", exc)
                 return
         sync_all(self._sheets_writer)
+
+    def _nurture_if_due(self) -> bool:
+        """Runs in a worker thread. Queues due follow-ups every NURTURE_CHECK_MINUTES."""
+        if time.monotonic() - self._last_nurture < get_settings().nurture_check_minutes * 60:
+            return False
+        self._last_nurture = time.monotonic()
+        return bool(run_nurture().get("sent"))
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._run(), name="event-worker")
@@ -173,6 +182,8 @@ class Worker:
                     counts = await asyncio.to_thread(run_once)
                     if not counts:
                         break
+                if await asyncio.to_thread(self._nurture_if_due):
+                    await asyncio.to_thread(run_once)  # send the follow-ups just queued
                 await asyncio.to_thread(self._sync_sheets_if_due)
             except Exception:  # noqa: BLE001 - keep the worker alive
                 log.exception("worker loop error")

@@ -82,6 +82,8 @@ test("a hot lead: read, take over, reply, hand back, mark as bought", async ({ p
   await expect(details.getByLabel(/Score \d+, Hot/)).toBeVisible();
   await expect(details.getByText("Coimbatore", { exact: true })).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/03-lead-hot.png` });
+  await details.getByRole("button", { name: "Yes", exact: true }).click(); // "Is this lead really hot?"
+  await expect(details.getByText("You confirmed this lead is hot.")).toBeVisible();
 
   await page.getByRole("button", { name: "Take over" }).click();
   await expect(page.getByText("You're handling this conversation.", { exact: false }).first()).toBeVisible();
@@ -111,7 +113,9 @@ test("a new handoff appears live, without reloading", async ({ page }) => {
   await expect(page.getByRole("region", { name: "Leads" }).getByRole("link", { name: /Kavya Iyer/ })).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/05-live-alert.png` });
   await toast.click();
-  await expect(page.getByText("Sure! A member of our team will contact you shortly.")).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Conversation" }).getByText("Sure! A member of our team will contact you shortly."),
+  ).toBeVisible();
   await page.getByRole("link", { name: "Alerts" }).click();
   await expect(page.getByRole("heading", { name: "Alerts" })).toBeVisible();
   await page.screenshot({ path: `${SHOTS}/06-alerts.png` });
@@ -153,24 +157,95 @@ test("settings: change when a lead counts as hot", async ({ page }) => {
   await page.screenshot({ path: `${SHOTS}/09-activity.png` });
 });
 
+test("follow-ups: a quiet customer who agreed gets one, shown in the conversation", async ({ page }) => {
+  await signIn(page);
+  await page.getByRole("link", { name: "Settings" }).click();
+  const planned = page.getByRole("heading", { name: "Planned next" }).locator("../..");
+  await expect(planned.getByText("Arjun Mehta")).toBeVisible(); // said "Haan" to the opt-in question
+  // Make the first follow-up due after ~9 seconds, at any hour, then check now.
+  await page.getByLabel("Follow-up 1: days without a reply").fill("0.0001");
+  await page.getByLabel("Send from (hour)").fill("0");
+  await page.getByLabel("Until (hour)").fill("24");
+  await page.getByRole("button", { name: "Save follow-ups" }).click();
+  await expect(page.getByText("Saved. Every lead's next follow-up", { exact: false })).toBeVisible();
+  await page.waitForTimeout(9000);
+  await page.getByRole("button", { name: "Check now" }).click();
+  await expect(page.getByText(/follow-ups? sent\./)).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/10-settings-follow-ups.png`, fullPage: true });
+  // back to the usual rules
+  await page.getByLabel("Follow-up 1: days without a reply").fill("2");
+  await page.getByLabel("Send from (hour)").fill("10");
+  await page.getByLabel("Until (hour)").fill("19");
+  await page.getByRole("button", { name: "Save follow-ups" }).click();
+  await expect(page.getByRole("button", { name: "Save follow-ups" })).toBeDisabled();
+
+  await page.getByRole("link", { name: "Leads" }).click();
+  const list = page.getByRole("region", { name: "Leads" });
+  await list.getByRole("tab", { name: /All/ }).click();
+  await list.getByRole("link", { name: /Arjun Mehta/ }).click();
+  const convo = page.getByRole("region", { name: "Conversation" });
+  await expect(convo.getByText("Follow-up after a quiet spell, sent automatically")).toBeVisible();
+  await expect(convo.getByText(/Hi Arjun, just checking in about/)).toBeVisible(); // the template as the customer saw it
+  await expect(convo.getByText("Can we send you offers and reminders on WhatsApp? Reply YES or NO.", { exact: false })).toBeVisible();
+  const details = page.getByRole("complementary", { name: "Lead details" });
+  await expect(details.getByText(/Agreed \(said yes in the chat/)).toBeVisible();
+  await expect(details.getByText(/1 sent so far/)).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/11-lead-follow-up.png` });
+});
+
+test("analytics: the period's numbers, with a chart you can read by keyboard", async ({ page }) => {
+  await signIn(page);
+  await page.getByRole("link", { name: "Analytics" }).click();
+  await expect(page.getByRole("heading", { name: "Analytics" })).toBeVisible();
+  const chart = page.getByRole("img", { name: /New leads per day/ });
+  await expect(chart).toBeVisible();
+  await chart.focus();
+  await page.keyboard.press("End");
+  await page.keyboard.press("ArrowLeft");
+  await expect(chart.getByText(/\d+ leads?/)).toBeVisible(); // tooltip for the focused day
+  await expect(page.getByText("Follow-ups sent")).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/12-analytics.png`, fullPage: true });
+  await page.getByRole("radio", { name: "7 days" }).click();
+  await expect(page.getByRole("radio", { name: "7 days" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByText("Last 7 days, Asia/Kolkata time.")).toBeVisible();
+});
+
+test("erase a customer's personal data on request", async ({ page }) => {
+  await signIn(page);
+  const list = page.getByRole("region", { name: "Leads" });
+  await list.getByRole("tab", { name: /All/ }).click();
+  await list.getByRole("link", { name: /Vikram Nair/ }).click();
+  const details = page.getByRole("complementary", { name: "Lead details" });
+  await details.getByRole("button", { name: "Erase personal data" }).click();
+  await details.getByRole("button", { name: "Erase for good" }).click();
+  await expect(page.getByRole("heading", { name: "Erased customer" })).toBeVisible();
+  await expect(details.getByText(/Erased on/)).toBeVisible();
+  await expect(page.getByRole("region", { name: "Conversation" }).getByText("[erased]").first()).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}/13-erased.png` });
+});
+
 test.describe("phone", () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
   test("inbox, conversation and details work on a phone", async ({ page }) => {
     await signIn(page);
-    await page.screenshot({ path: `${SHOTS}/10-phone-inbox.png` });
+    await page.screenshot({ path: `${SHOTS}/14-phone-inbox.png` });
     await page.getByRole("link", { name: /Lakshmi R/ }).click();
     await expect(page.getByRole("region", { name: "Leads" })).toBeHidden();
     const convo = page.getByRole("region", { name: "Conversation" });
     await expect(convo.getByText("Thanks for the voice note!", { exact: false })).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/11-phone-lead.png` });
+    await page.screenshot({ path: `${SHOTS}/15-phone-lead.png` });
     await page.getByRole("button", { name: "Details" }).click();
     await expect(page.getByRole("complementary", { name: "Lead details" })).toBeVisible();
-    await page.screenshot({ path: `${SHOTS}/12-phone-details.png` });
+    await page.screenshot({ path: `${SHOTS}/16-phone-details.png` });
     await page.getByRole("button", { name: "Close" }).click();
     await page.getByRole("link", { name: "Back to leads" }).click();
     await expect(page.getByRole("region", { name: "Leads" })).toBeVisible();
     const width = await page.evaluate(() => document.documentElement.scrollWidth);
     expect(width).toBeLessThanOrEqual(390); // no sideways scrolling
+    await page.getByRole("link", { name: "Analytics" }).click();
+    await expect(page.getByRole("img", { name: /New leads per day/ })).toBeVisible();
+    await page.screenshot({ path: `${SHOTS}/17-phone-analytics.png`, fullPage: true });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   });
 });

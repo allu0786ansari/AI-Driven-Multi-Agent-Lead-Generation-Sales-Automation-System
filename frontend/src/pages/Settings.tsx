@@ -4,7 +4,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useToast } from "../components/toasts";
 import { Button, ErrorNote, Field, Input, PageHeader, Select, Spinner } from "../components/ui";
 import { api } from "../lib/api";
-import type { Product, QualificationConfig, Slot } from "../lib/types";
+import { dateTime, displayName, TEMPLATE_LABEL } from "../lib/format";
+import type { NurtureConfig, NurtureParam, Product, QualificationConfig, Slot, Template, Upcoming } from "../lib/types";
 
 const WEIGHT_LABEL: Record<string, string> = {
   product: "Names a product",
@@ -46,6 +47,7 @@ export function Settings() {
       <PageHeader title="Settings" />
       <div className="max-w-3xl">
         <Qualification />
+        <FollowUps />
         <ContentLinks />
         <System />
       </div>
@@ -187,6 +189,179 @@ function Qualification() {
         )}
       </Block>
     </>
+  );
+}
+
+const PARAM_LABEL: Record<NurtureParam, string> = { first_name: "first name", product: "product", offer: "offer" };
+const PARAMS_BY_COUNT: NurtureParam[][] = [[], ["first_name"], ["first_name", "product"], ["first_name", "product", "offer"]];
+
+function FollowUps() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const remote = useQuery({ queryKey: ["settings", "nurture"], queryFn: () => api<NurtureConfig>("/api/settings/nurture") });
+  const templates = useQuery({ queryKey: ["templates"], queryFn: () => api<{ templates: Template[] }>("/api/templates"), staleTime: 600_000 });
+  const upcoming = useQuery({ queryKey: ["nurture", "upcoming"], queryFn: () => api<Upcoming>("/api/nurture/upcoming") });
+  const [cfg, setCfg] = useState<NurtureConfig | null>(null);
+  useEffect(() => {
+    if (remote.data) setCfg(structuredClone(remote.data));
+  }, [remote.data]);
+  const save = useMutation({
+    mutationFn: (c: NurtureConfig) => api<NurtureConfig>("/api/settings/nurture", { method: "PUT", json: c }),
+    onSuccess: (c) => {
+      qc.setQueryData(["settings", "nurture"], c);
+      qc.invalidateQueries({ queryKey: ["nurture"] });
+      toast.show("Saved. Every lead's next follow-up is worked out again within a few minutes.");
+    },
+  });
+  const run = useMutation({
+    mutationFn: () => api<Record<string, number>>("/api/nurture/run", { method: "POST" }),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["nurture"] });
+      toast.show(r.sent ? `${r.sent} follow-up${r.sent > 1 ? "s" : ""} sent.` : "Nothing due right now.");
+    },
+    onError: (e: Error) => toast.show(e.message, { tone: "error" }),
+  });
+
+  if (remote.isPending || !cfg) return <Spinner />;
+  if (remote.isError) return <ErrorNote error={remote.error} />;
+  const dirty = JSON.stringify(cfg) !== JSON.stringify(remote.data);
+  const names = [...new Set([...(templates.data?.templates ?? []).map((t) => t.name), ...cfg.steps.map((st) => st.template)])];
+  const paramCount = (name: string) => templates.data?.templates.find((t) => t.name === name)?.param_count;
+  const setStep = (i: number, patch: Partial<NurtureConfig["steps"][number]>) =>
+    setCfg((c) => ({ ...c!, steps: c!.steps.map((st, j) => (j === i ? { ...st, ...patch } : st)) }));
+
+  return (
+    <Block
+      title="Follow-ups"
+      intro="When a customer who agreed to offers goes quiet, an approved WhatsApp template reminds them. Any message from the customer stops the sequence; it starts again if they go quiet again. Never sent to someone who opted out, a lead marked Contacted, Bought or Lost, or while you are handling the conversation."
+    >
+      <label className="flex items-center gap-2 text-sm font-medium">
+        <input type="checkbox" checked={cfg.enabled} onChange={(e) => setCfg({ ...cfg, enabled: e.target.checked })} className="size-4" />
+        Send follow-ups
+      </label>
+
+      <ol className={`mt-5 flex flex-col gap-3 ${cfg.enabled ? "" : "opacity-50"}`}>
+        {cfg.steps.map((st, i) => (
+          <li key={i} className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="tabular w-5 text-ink-3">{i + 1}</span>
+            <span>After</span>
+            <Input
+              aria-label={`Follow-up ${i + 1}: days without a reply`}
+              type="number"
+              min={0.5}
+              max={60}
+              step={0.5}
+              value={st.after_days}
+              onChange={(e) => setStep(i, { after_days: Number(e.target.value) })}
+              className="tabular h-9 w-20 text-right"
+            />
+            <span>days quiet, send</span>
+            <Select
+              aria-label={`Follow-up ${i + 1}: template`}
+              value={st.template}
+              onChange={(e) => {
+                const n = paramCount(e.target.value);
+                setStep(i, { template: e.target.value, ...(n != null && n <= 3 ? { params: PARAMS_BY_COUNT[n] } : {}) });
+              }}
+              className="h-9 w-56"
+            >
+              {names.map((n) => (
+                <option key={n} value={n}>
+                  {TEMPLATE_LABEL[n] ? `${TEMPLATE_LABEL[n]} (${n})` : n}
+                </option>
+              ))}
+            </Select>
+            <Button
+              tone="ghost"
+              aria-label={`Remove follow-up ${i + 1}`}
+              disabled={cfg.steps.length === 1}
+              onClick={() => setCfg({ ...cfg, steps: cfg.steps.filter((_, j) => j !== i) })}
+              className="px-2"
+            >
+              <Trash2 className="size-4" />
+            </Button>
+            <span className="basis-full pl-7 text-xs text-ink-3">
+              Fills in: {st.params.map((x) => PARAM_LABEL[x]).join(", ") || "nothing"}
+              {st.params.includes("offer") && !cfg.offer_text.trim() ? ". Skipped until you add an offer below." : ""}
+            </span>
+          </li>
+        ))}
+      </ol>
+      {cfg.steps.length < 5 && (
+        <Button
+          className="mt-3"
+          icon={<Plus className="size-4" aria-hidden />}
+          onClick={() => {
+            const last = cfg.steps[cfg.steps.length - 1];
+            setCfg({ ...cfg, steps: [...cfg.steps, { after_days: (last?.after_days ?? 0) + 3, template: last?.template ?? "nurture_followup_1", params: ["first_name", "product"] }] });
+          }}
+        >
+          Add a follow-up
+        </Button>
+      )}
+
+      <div className="mt-6 grid max-w-xl gap-4 sm:grid-cols-2">
+        <Field label="Offer for the offer template" htmlFor="offer" hint={'Fills the offer, e.g. "free delivery in Chennai this week".'}>
+          <Input id="offer" value={cfg.offer_text} maxLength={200} onChange={(e) => setCfg({ ...cfg, offer_text: e.target.value })} />
+        </Field>
+        <Field label="Most follow-ups per customer" htmlFor="maxper" hint="Counted over all time, not per quiet spell.">
+          <Input id="maxper" type="number" min={1} max={20} value={cfg.max_per_lead} onChange={(e) => setCfg({ ...cfg, max_per_lead: Number(e.target.value) })} />
+        </Field>
+        <Field label="Don't start after (days quiet)" htmlFor="maxquiet" hint="Customers quiet longer than this get no new follow-ups.">
+          <Input id="maxquiet" type="number" min={1} max={365} value={cfg.max_quiet_days} onChange={(e) => setCfg({ ...cfg, max_quiet_days: Number(e.target.value) })} />
+        </Field>
+        <div className="hidden sm:block" />
+        <Field label="Send from (hour)" htmlFor="fromh" hint="Business time zone, 24-hour clock.">
+          <Input id="fromh" type="number" min={0} max={23} value={cfg.send_from_hour} onChange={(e) => setCfg({ ...cfg, send_from_hour: Number(e.target.value) })} />
+        </Field>
+        <Field label="Until (hour)" htmlFor="untilh">
+          <Input id="untilh" type="number" min={1} max={24} value={cfg.send_until_hour} onChange={(e) => setCfg({ ...cfg, send_until_hour: Number(e.target.value) })} />
+        </Field>
+      </div>
+
+      <div className="mt-6 flex items-center gap-3">
+        <Button tone="primary" disabled={!dirty} busy={save.isPending} onClick={() => save.mutate(cfg)}>
+          Save follow-ups
+        </Button>
+        {dirty && (
+          <Button tone="ghost" onClick={() => setCfg(structuredClone(remote.data!))}>
+            Discard changes
+          </Button>
+        )}
+      </div>
+      {save.isError && (
+        <div className="mt-3">
+          <ErrorNote error={save.error} />
+        </div>
+      )}
+
+      <div className="mt-8 flex flex-col gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold">Planned next</h3>
+          <Button onClick={() => run.mutate()} busy={run.isPending}>
+            Check now
+          </Button>
+        </div>
+        {upcoming.data && upcoming.data.upcoming.length > 0 ? (
+          <ul className="flex flex-col text-sm">
+            {upcoming.data.upcoming.map((u) => (
+              <li key={u.lead_id} className="flex flex-wrap justify-between gap-x-4 border-b border-rule py-1.5 last:border-0">
+                <span>
+                  {displayName({ name: u.name, contact_phone: null })}
+                  {u.product_interest && <span className="text-ink-3"> about {u.product_interest}</span>}
+                </span>
+                <span className="tabular text-ink-2">
+                  Follow-up {u.step}, {dateTime(u.due_at)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-ink-3">Nothing planned. Follow-ups are planned for customers who agreed to offers and went quiet.</p>
+        )}
+        {upcoming.data && <p className="text-xs text-ink-3">{upcoming.data.sent_last_7_days} sent in the last 7 days.</p>}
+      </div>
+    </Block>
   );
 }
 

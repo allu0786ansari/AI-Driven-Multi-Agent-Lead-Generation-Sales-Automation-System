@@ -1,0 +1,82 @@
+{"id": "c01", "kind": "comment", "lang": "en", "text": "Price?", "intent": "product_question"}
+{"id": "c02", "kind": "comment", "lang": "en", "text": "pp", "intent": "product_question"}
+{"id": "c03", "kind": "comment", "lang": "en", "text": "How much is this air fryer?", "intent": "product_question"}
+{"id": "c04", "kind": "comment", "lang": "en", "text": "Interested! DM me", "intent": "purchase_interest"}
+{"id": "c05", "kind": "comment", "lang": "en", "text": "Is this available in Coimbatore?", "intent": "product_question"}
+{"id": "c06", "kind": "comment", "lang": "hinglish", "text": "kitne ka hai?", "intent": "product_question"}
+{"id": "c07", "kind": "comment", "lang": "tanglish", "text": "rate sollunga", "intent": "product_question"}
+{"id": "c08", "kind": "comment", "lang": "tanglish", "text": "evlo price?", "intent": "product_question"}
+{"id": "c09", "kind": "comment", "lang": "hi", "text": "इसकी कीमत क्या है?", "intent": "product_question"}
+{"id": "c10", "kind": "comment", "lang": "ta", "text": "இதன் விலை என்ன?", "intent": "product_question"}
+{"id": "c11", "kind": "comment", "lang": "en", "text": "I want to order 2 of these", "intent": "purchase_interest"}
+{"id": "c12", "kind": "comment", "lang": "en", "text": "Want this for my mom 😍", "intent": "purchase_interest"}
+{"id": "c13", "kind": "comment", "lang": "en", "text": "Need this! how to order?", "intent": "purchase_interest"}
+{"id": "c14", "kind": "comment", "lang": "en", "text": "Does it come with warranty?", "intent": "product_question"}
+{"id": "c15", "kind": "comment", "lang": "en", "text": "COD available?", "intent": "product_question"}
+{"id": "c16", "kind": "comment", "lang": "en", "text": "Mixer jar size?", "intent": "product_question"}
+{"id": "c17", "kind": "comment", "lang": "en", "text": "Worst product, stopped working in a week", "intent": "complaint"}
+{"id": "c18", "kind": "comment", "lang": "en", "text": "Still waiting for my refund!!", "intent": "complaint"}
+{"id": "c19", "kind": "comment", "lang": "en", "text": "Delivery was late and the box was damaged", "intent": "complaint"}
+{"id": "c20", "kind": "comment", "lang": "en", "text": "I ordered 10 days ago and nothing came. Fraud", "intent": "complaint"}
+{"id": "c21", "kind": "comment", "lang": "hinglish", "text": "mera mixer kharab ho gaya, koi reply nahi karta", "intent": "complaint"}
+{"id": "c22", "kind": "comment", "lang": "en", "text": "Earn 5000 daily from home, check my bio", "intent": "spam"}
+{"id": "c23", "kind": "comment", "lang": "en", "text": "Follow me for free followers", "intent": "spam"}
+{"id": "c24", "kind": "comment", "lang": "en", "text": "Best crypto signals www.signals.xyz", "intent": "spam"}
+{"id": "c25", "kind": "comment", "lang": "en", "text": "Collab? DM @promo_page", "intent": "spam"}
+{"id": "c26", "kind": "comment", "lang": "en", "text": "Nice 😍", "intent": "other"}
+{"id": "c27", "kind": "comment", "lang": "en", "text": "🔥🔥🔥", "intent": "other"}
+{"id": "c28", "kind": "comment", "lang": "en", "text": "@priya_k look at this", "intent": "other"}
+{"id": "c29", "kind": "comment", "lang": "en", "text": "Beautiful colour", "intent": "other"}
+{"id": "c30", "kind": "comment", "lang": "en", "text": "Wow", "intent": "other"}
+{"id": "c31", "kind": "comment", "lang": "en", "text": "Love your products, bought one last year", "intent": "other"}
+{"id": "c32", "kind": "comment", "lang": "en", "text": "Superb quality 👌", "intent": "other"}
+{"id": "c33", "kind": "comment", "lang": "en", "text": "Can I get it in black?", "intent": "product_question"}
+{"id": "c34", "kind": "comment", "lang": "en", "text": "Any offer for Diwali?", "intent": "product_question"}
+{"id": "c35", "kind": "comment", "lang": "en", "text": "Is it good for a family of 5?", "intent": "product_question"}
+{"id": "c36", "kind": "comment", "lang": "hinglish", "text": "Hindi mein batao price", "intent": "product_question"}
+{"id": "m01", "kind": "message", "lang": "en", "text": "What is the price of the 6L air fryer?", "expect": {"skus": ["AF-6L-WIN"]}}
+{"id": "m02", "kind": "message", "lang": "en", "text": "air fryer price", "expect": {"skus": ["AF-4L-DIG", "AF-6L-WIN"]}}
+{"id": "m03", "kind": "message", "lang": "hinglish", "text": "1000 watt mixer kitne ka hai?", "expect": {"skus": ["MG-1000-4J"]}}
+{"id": "m04", "kind": "message", "lang": "hinglish", "text": "mixer grinder chahiye 4000 ke andar", "expect": {"skus": ["MG-750-3J"], "slots": {"budget": 4000}}}
+{"id": "m05", "kind": "message", "lang": "en", "text": "Do you have an induction cooktop?", "expect": {"skus": ["IC-2000-TCH"]}}
+{"id": "m06", "kind": "message", "lang": "en", "text": "kettle price?", "expect": {"skus": ["EK-1.8-SS"]}}
+{"id": "m07", "kind": "message", "lang": "tanglish", "text": "water purifier evlo?", "expect": {"skus": ["WP-RO-UV-8L"]}}
+{"id": "m08", "kind": "message", "lang": "en", "text": "Is the hand blender in stock?", "expect": {"skus": ["HB-400-SET"]}}
+{"id": "m09", "kind": "message", "lang": "en", "text": "Which air fryer has a window?", "expect": {"skus": ["AF-6L-WIN"]}}
+{"id": "m10", "kind": "message", "lang": "hinglish", "text": "sabse sasta air fryer kaunsa hai?", "expect": {"skus": ["AF-4L-DIG"]}}
+{"id": "m11", "kind": "message", "lang": "en", "text": "I need something to grind masala", "expect": {"skus": ["MG-750-3J", "MG-1000-4J"]}}
+{"id": "m12", "kind": "message", "lang": "en", "text": "Mixer with 4 jars?", "expect": {"skus": ["MG-1000-4J"]}}
+{"id": "m13", "kind": "message", "lang": "hi", "text": "मिक्सर ग्राइंडर की कीमत?", "expect": {"skus": ["MG-750-3J", "MG-1000-4J"]}}
+{"id": "m14", "kind": "message", "lang": "ta", "text": "ஏர் ஃப்ரையர் விலை என்ன?", "expect": {"skus": ["AF-4L-DIG", "AF-6L-WIN"]}}
+{"id": "m15", "kind": "message", "lang": "en", "text": "RO water purifier for a small flat", "expect": {"skus": ["WP-RO-UV-8L"]}}
+{"id": "m16", "kind": "message", "lang": "en", "text": "electric kettle 1.8 litre", "expect": {"skus": ["EK-1.8-SS"]}}
+{"id": "m17", "kind": "message", "lang": "hinglish", "text": "induction ka price batao", "expect": {"skus": ["IC-2000-TCH"]}}
+{"id": "m18", "kind": "message", "lang": "tanglish", "text": "mixie vaanganum, 3 jar podhum", "expect": {"skus": ["MG-750-3J"]}}
+{"id": "m19", "kind": "message", "lang": "en", "text": "budget 5000, which air fryer?", "expect": {"skus": ["AF-4L-DIG"], "slots": {"budget": 5000}}}
+{"id": "m20", "kind": "message", "lang": "en", "text": "warranty on the kettle?", "expect": {"skus": ["EK-1.8-SS"]}}
+{"id": "m21", "kind": "message", "lang": "en", "text": "Budget 15000. Coimbatore delivery this week?", "context_interest": "Air Fryers", "expect": {"skus": ["AF-6L-WIN", "AF-4L-DIG"], "slots": {"budget": 15000, "city": "Coimbatore", "timeline": "this_week"}}}
+{"id": "m22", "kind": "message", "lang": "en", "text": "ok thanks, is the black one in stock?", "context_interest": "Mixer Grinders", "expect": {"skus": ["MG-1000-4J"]}}
+{"id": "m23", "kind": "message", "lang": "en", "text": "hand blender with attachments", "expect": {"skus": ["HB-400-SET"]}}
+{"id": "m24", "kind": "message", "lang": "hinglish", "text": "purifier ka installation free hai kya?", "expect": {"skus": ["WP-RO-UV-8L"]}}
+{"id": "m25", "kind": "message", "lang": "en", "text": "do you deliver air fryers to Madurai?", "expect": {"skus": ["AF-4L-DIG", "AF-6L-WIN"], "slots": {"city": "Madurai"}}}
+{"id": "m26", "kind": "message", "lang": "en", "text": "What's the wattage of the cooktop?", "expect": {"skus": ["IC-2000-TCH"]}}
+{"id": "s01", "kind": "message", "lang": "en", "text": "Need 2 air fryers, delivery Chennai tomorrow", "expect": {"skus": ["AF-4L-DIG", "AF-6L-WIN"], "slots": {"quantity": 2, "city": "Chennai", "timeline": "this_week"}}}
+{"id": "s02", "kind": "message", "lang": "hinglish", "text": "3 pcs mixer chahiye, budget 5k, Pune", "expect": {"skus": ["MG-750-3J"], "slots": {"quantity": 3, "budget": 5000, "city": "Pune"}}}
+{"id": "s03", "kind": "message", "lang": "hinglish", "text": "next month lena hai, 2 mixer", "expect": {"skus": ["MG-750-3J", "MG-1000-4J"], "slots": {"quantity": 2, "timeline": "later"}}}
+{"id": "s04", "kind": "message", "lang": "en", "text": "kettle needed today, pincode 600041", "expect": {"skus": ["EK-1.8-SS"], "slots": {"city": "PIN 600041", "timeline": "now"}}}
+{"id": "s05", "kind": "message", "lang": "en", "text": "Bangalore delivery? budget around 7000 for an air fryer", "expect": {"skus": ["AF-6L-WIN", "AF-4L-DIG"], "slots": {"city": "Bangalore", "budget": 7000}}}
+{"id": "h01", "kind": "message", "lang": "en", "text": "Do you sell microwaves?", "expect": {"handoff": true}}
+{"id": "h02", "kind": "message", "lang": "en", "text": "Can you call me please", "expect": {"handoff": true}}
+{"id": "h03", "kind": "message", "lang": "en", "text": "I want to talk to a person", "expect": {"handoff": true}}
+{"id": "h04", "kind": "message", "lang": "en", "text": "Do you repair old mixers?", "expect": {"handoff": true}}
+{"id": "h05", "kind": "message", "lang": "en", "text": "Where is your shop located?", "expect": {"handoff": true}}
+{"id": "h06", "kind": "message", "lang": "en", "text": "Do you have a refrigerator?", "expect": {"handoff": true}}
+{"id": "h07", "kind": "message", "lang": "hinglish", "text": "mujhe kisi se baat karni hai", "expect": {"handoff": true}}
+{"id": "h08", "kind": "message", "lang": "en", "text": "my order 4521 has not arrived yet", "expect": {"handoff": true}}
+{"id": "h09", "kind": "message", "lang": "en", "text": "cancel my order please", "expect": {"handoff": true, "opt_out": false}}
+{"id": "h10", "kind": "message", "lang": "en", "text": "the mixer stopped working", "expect": {"handoff": true, "opt_out": false}}
+{"id": "o01", "kind": "message", "lang": "en", "text": "STOP", "expect": {"opt_out": true}}
+{"id": "o02", "kind": "message", "lang": "hinglish", "text": "band karo", "expect": {"opt_out": true}}
+{"id": "o03", "kind": "message", "lang": "en", "text": "Stop promotions", "expect": {"opt_out": true}}
+{"id": "o04", "kind": "message", "lang": "ta", "text": "நிறுத்து", "expect": {"opt_out": true}}
+{"id": "o05", "kind": "message", "lang": "hi", "text": "मैसेज मत भेजो", "expect": {"opt_out": true}}

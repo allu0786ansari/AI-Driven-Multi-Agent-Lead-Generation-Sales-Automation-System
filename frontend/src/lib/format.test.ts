@@ -103,3 +103,37 @@ describe("conversation order", async () => {
     expect(items.sort(byTime).map((i) => i.id)).toEqual(["voice note", "reply"]);
   });
 });
+
+describe("Week 5 helpers", async () => {
+  const { fillTemplate, duration, pct, consentText, displayName } = await import("./format");
+  const { niceMax } = await import("../components/charts");
+  it("fills a template the way WhatsApp shows it", () => {
+    expect(fillTemplate("Hi {{1}}, about {{2}}: {{ 3 }}", ["Priya", "Air Fryers"])).toBe("Hi Priya, about Air Fryers: {{ 3 }}");
+  });
+  it("durations and percentages", () => {
+    expect(duration(3.4)).toBe("3 s");
+    expect(duration(0.2)).toBe("under 1 s");
+    expect(duration(65)).toBe("1 min 5 s");
+    expect(duration(7800)).toBe("2 h 10 min");
+    expect(duration(null)).toBe("-");
+    expect(pct(66.66)).toBe("66.7%");
+    expect(pct(50)).toBe("50%");
+    expect(pct(null)).toBe("-");
+  });
+  it("shows a template in the inbox by name, not as its raw values", async () => {
+    const { previewText } = await import("./format");
+    expect(previewText("[template nurture_followup_1] Arjun | PowerChef")).toBe("Check-in template");
+    expect(previewText("[template my_promo] x")).toBe("my_promo template");
+  });
+  it("chart axis rounds up to a clean number", () => {
+    expect([0, 3, 7, 12, 26, 180].map(niceMax)).toEqual([1, 5, 10, 20, 50, 200]);
+  });
+  it("says what the customer agreed to", () => {
+    const base = { opted_out: false, opted_out_at: null, whatsapp_opt_in: false, opt_in_source: null, opt_in_at: null, opt_in_asked_at: null, contact_phone: "+91" };
+    expect(consentText(base)).toBe("Not asked yet");
+    expect(consentText({ ...base, opt_in_asked_at: "2026-10-18T10:00:00Z" })).toBe("Asked in the chat, no yes yet");
+    expect(consentText({ ...base, whatsapp_opt_in: true, opt_in_source: "ctwa_message", opt_in_at: "2026-10-18T10:00:00Z" })).toMatch(/^Agreed \(said yes in the chat, 18 Oct\)$/);
+    expect(consentText({ ...base, opted_out: true, opted_out_at: "2026-10-18T10:00:00Z" })).toMatch(/^Opted out on 18 Oct/);
+    expect(displayName({ name: "Ravi", contact_phone: null, erased_at: "2026-10-18T10:00:00Z" })).toBe("Erased customer");
+  });
+});

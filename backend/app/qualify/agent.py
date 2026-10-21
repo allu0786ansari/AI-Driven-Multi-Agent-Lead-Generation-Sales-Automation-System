@@ -7,6 +7,7 @@ spec 3.3: qualify_agent.process_message(lead_id, message) -> QualifyResult
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -92,6 +93,22 @@ def product_from_hits(text: str, hits: list[RetrievedProduct] | None) -> Qualify
     return QualifySlots(product=top.product.name if clear else None, category=top.product.category)
 
 
+_COUNT_THEN_WORD = re.compile(r"\b([1-9]\d?)\s+([^\W\d_]{3,})", re.UNICODE)
+
+
+def quantity_from_hits(text: str, hits: list[RetrievedProduct] | None) -> QualifySlots:
+    """ "2 mixer", "3 air fryers": a small number right before a word naming a found product.
+
+    Found in the Week 5 evaluation. Numbers above 99 are never read as a quantity
+    (prices, watts), nor numbers before other words ("1000 watt", "5000 ka").
+    """
+    for m in _COUNT_THEN_WORD.finditer(text or ""):
+        word = m.group(2)
+        if any(mentions_product(word, h.product) for h in hits or []):
+            return QualifySlots(quantity=int(m.group(1)))
+    return QualifySlots()
+
+
 def process_message(
     session: Session,
     lead: Lead,
@@ -101,7 +118,11 @@ def process_message(
 ) -> QualifyResult:
     config = get_config(session, lead.user_id)
 
-    found = extract_rules(text).merged_with(product_from_hits(text, hits))
+    found = (
+        quantity_from_hits(text, hits)
+        .merged_with(extract_rules(text))
+        .merged_with(product_from_hits(text, hits))
+    )
     if llm_slots is not None:
         found = found.merged_with(llm_slots)  # the LLM's reading wins over the rules
     slots = current_slots(lead).merged_with(found)
@@ -130,5 +151,10 @@ def preview_next_question(
 
     Uses the rules and the product search (the LLM's reading arrives together with the reply).
     """
-    slots = current_slots(lead).merged_with(extract_rules(text).merged_with(product_from_hits(text, hits)))
+    found = (
+        quantity_from_hits(text, hits)
+        .merged_with(extract_rules(text))
+        .merged_with(product_from_hits(text, hits))
+    )
+    slots = current_slots(lead).merged_with(found)
     return next_question(slots, get_config(session, lead.user_id))

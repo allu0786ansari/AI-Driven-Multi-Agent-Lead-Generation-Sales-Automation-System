@@ -23,6 +23,7 @@
   --ig: #b0367a;
   --fb: #2e6bd6;
   --focus: #2e6bd6;
+  --chart: #2f6a9e; /* single-series charts (validated: contrast, lightness, chroma) */
   color-scheme: light;
 }
 
@@ -44,6 +45,7 @@
     --ig: #d4589c;
     --fb: #5b8ff0;
     --focus: #7fb0ff;
+    --chart: #4f8fcf;
     color-scheme: dark;
   }
 }
@@ -56,6 +58,7 @@
   --color-ink-2: var(--ink-2);
   --color-ink-3: var(--ink-3);
   --color-rule: var(--rule);
+  --color-chart: var(--chart);
   --color-cold: var(--cold);
   --color-warm: var(--warm);
   --color-hot: var(--hot);

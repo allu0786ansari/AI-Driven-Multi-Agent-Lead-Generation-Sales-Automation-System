@@ -135,3 +135,21 @@ def extract_rules(text: str) -> QualifySlots:
 
 def wants_human(text: str | None) -> bool:
     return bool(text and _WANTS_HUMAN.search(text))
+
+
+# Complaints and after-sales problems a person should answer (spec Section 10 handoff triggers).
+# Found in the Week 5 evaluation: these got a product list in DMs.
+_SUPPORT = re.compile(
+    r"\b(my order|order (?:no|number|id|status)|not (?:yet )?(?:arrived|received|delivered)|"
+    r"(?:has|have|hasn'?t|haven'?t)(?: not)? (?:arrived|come|been delivered)|cancel (?:my |the |this )?order|"
+    r"return (?:it|this|my)|replace(?:ment)? (?:it|this|my)|repair|servicing|service cent(?:er|re)|spare parts?|"
+    r"stopped working|not working|isn'?t working|broken|damaged|defective|refund|complaint|"
+    r"leak(?:s|ing)?|overheat(?:s|ing)?|innum varala|varavillai|abhi tak nahi aaya|nahi mila|"
+    r"kharab|band ho gaya|chal nahi raha|kaam nahi kar raha|velai seyyala|work aagala)\b",
+    re.I,
+)
+
+
+def needs_support(text: str | None) -> bool:
+    """A complaint or an order / after-sales problem: the assistant hands it to a person."""
+    return bool(text and (_SUPPORT.search(text) or _NEGATIVE.search(text)))

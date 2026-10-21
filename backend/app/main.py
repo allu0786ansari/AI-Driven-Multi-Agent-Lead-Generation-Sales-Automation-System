@@ -14,8 +14,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app import handlers as _handlers  # noqa: F401 - registers event handlers with the router
+from app.api.analytics import router as analytics_router
 from app.api.leads import router as leads_router
 from app.api.notifications import router as notifications_router
+from app.api.nurture import router as nurture_router
 from app.api.products import router as products_router
 from app.api.settings_api import router as settings_router
 from app.api.system import router as system_router
@@ -90,6 +92,8 @@ def create_app() -> FastAPI:
     app.include_router(settings_router)
     app.include_router(notifications_router)
     app.include_router(templates_router)
+    app.include_router(nurture_router)
+    app.include_router(analytics_router)
     app.include_router(webhooks_router)
     app.include_router(ws_router)
     mount_dashboard(app, settings.frontend_dist)  # last: catch-all for the React app

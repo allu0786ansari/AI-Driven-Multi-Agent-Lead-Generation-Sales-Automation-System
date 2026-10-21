@@ -4,7 +4,19 @@ import { HeatBar, Score, StatusWord } from "../../components/heat";
 import { useToast } from "../../components/toasts";
 import { Button, Input } from "../../components/ui";
 import { api } from "../../lib/api";
-import { formatCost, rationaleLines, shortTime, slotFacts, SOURCE_LABEL, windowLeft } from "../../lib/format";
+import {
+  consentText,
+  dateTime,
+  formatCost,
+  heatOf,
+  rationaleLines,
+  shortDate,
+  shortTime,
+  slotFacts,
+  SOURCE_LABEL,
+  TEMPLATE_LABEL,
+  windowLeft,
+} from "../../lib/format";
 import type { LeadDetail, QualificationConfig } from "../../lib/types";
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -61,6 +73,7 @@ export function Facts({ lead }: { lead: LeadDetail }) {
         ) : (
           <p className="text-sm text-ink-3">Not scored yet. The score grows as the customer shares what they need.</p>
         )}
+        {heatOf(lead.status, lead.qualification_score) === "hot" && !lead.erased_at && <HotCheck lead={lead} />}
       </div>
 
       <Section title="What they told us">
@@ -81,10 +94,7 @@ export function Facts({ lead }: { lead: LeadDetail }) {
           <Row label="Email" value={lead.contact_email} />
           <Row label="Instagram" value={lead.instagram_scoped_id ? "Connected" : null} />
           <Row label="Messenger" value={lead.messenger_scoped_id ? "Connected" : null} />
-          <Row
-            label="WhatsApp offers"
-            value={lead.opted_out ? "Opted out of all messages" : lead.whatsapp_opt_in ? "Agreed" : "Not agreed"}
-          />
+          <Row label="WhatsApp offers" value={lead.erased_at ? null : consentText(lead)} />
           <Row label="Language" value={lead.language} />
         </dl>
       </Section>
@@ -108,8 +118,110 @@ export function Facts({ lead }: { lead: LeadDetail }) {
         </dl>
       </Section>
 
-      <Assign lead={lead} />
+      {lead.follow_up && !lead.erased_at && (
+        <Section title="Follow-ups">
+          {lead.follow_up.due_at ? (
+            <p className="text-sm text-ink">
+              Next: {TEMPLATE_LABEL[lead.follow_up.template ?? ""] ?? lead.follow_up.template},{" "}
+              <span className="tabular">{dateTime(lead.follow_up.due_at)}</span>
+            </p>
+          ) : (
+            <p className="text-sm text-ink-2">{lead.follow_up.reason}</p>
+          )}
+          {lead.follow_up.sent > 0 && (
+            <p className="text-xs text-ink-3">
+              {lead.follow_up.sent} sent so far. Any message from the customer stops the sequence.
+            </p>
+          )}
+        </Section>
+      )}
+
+      {!lead.erased_at && <Assign lead={lead} />}
+      <Erase lead={lead} />
     </div>
+  );
+}
+
+function HotCheck({ lead }: { lead: LeadDetail }) {
+  const qc = useQueryClient();
+  const answer = useMutation({
+    mutationFn: (agree: boolean) => api(`/api/leads/${lead.lead_id}/feedback`, { method: "POST", json: { agree } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["lead", lead.lead_id] }),
+  });
+  if (lead.hot_feedback != null && !answer.isPending) {
+    return (
+      <p className="flex items-center justify-between gap-2 text-sm text-ink-2">
+        {lead.hot_feedback ? "You confirmed this lead is hot." : "You said this lead is not really hot."}
+        <button type="button" className="text-ink underline-offset-2 hover:underline" onClick={() => answer.mutate(!lead.hot_feedback)}>
+          Change
+        </button>
+      </p>
+    );
+  }
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-md bg-sheet-2 px-3 py-2 text-sm">
+      <span className="text-ink">Is this lead really hot?</span>
+      <span className="flex gap-1.5">
+        <Button onClick={() => answer.mutate(true)} disabled={answer.isPending}>
+          Yes
+        </Button>
+        <Button onClick={() => answer.mutate(false)} disabled={answer.isPending}>
+          No
+        </Button>
+      </span>
+    </div>
+  );
+}
+
+function Erase({ lead }: { lead: LeadDetail }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [confirming, setConfirming] = useState(false);
+  const erase = useMutation({
+    mutationFn: () => api(`/api/leads/${lead.lead_id}/personal-data`, { method: "DELETE" }),
+    onSuccess: () => {
+      setConfirming(false);
+      qc.invalidateQueries({ queryKey: ["lead", lead.lead_id] });
+      qc.invalidateQueries({ queryKey: ["leads"] });
+      toast.show("Personal data erased.");
+    },
+    onError: (e: Error) => toast.show(e.message, { tone: "error" }),
+  });
+  if (lead.erased_at) {
+    return (
+      <Section title="Personal data">
+        <p className="text-sm text-ink-2">
+          Erased on {shortDate(lead.erased_at)}. Only the product, score, status and costs are kept, for your numbers.
+        </p>
+      </Section>
+    );
+  }
+  return (
+    <Section title="Personal data">
+      {confirming ? (
+        <div className="flex flex-col gap-3 rounded-md border border-danger/40 p-3">
+          <p className="text-sm text-ink">
+            This removes their name, number, IDs and every message for good. The lead stays in your numbers without
+            them, and nothing more can be sent to it.
+          </p>
+          <div className="flex gap-2">
+            <Button tone="danger" onClick={() => erase.mutate()} busy={erase.isPending}>
+              Erase for good
+            </Button>
+            <Button tone="ghost" onClick={() => setConfirming(false)}>
+              Keep
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col items-start gap-2">
+          <p className="text-sm text-ink-3">If the customer asks you to delete their data.</p>
+          <Button tone="danger" onClick={() => setConfirming(true)}>
+            Erase personal data
+          </Button>
+        </div>
+      )}
+    </Section>
   );
 }
 

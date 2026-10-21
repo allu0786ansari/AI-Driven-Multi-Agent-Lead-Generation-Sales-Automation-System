@@ -135,6 +135,11 @@ class Settings(BaseSettings):
     # Built React app (npm run build in /frontend). Served at / when the folder exists.
     frontend_dist: str = str(BACKEND_DIR.parent / "frontend" / "dist")
 
+    # ---- Week 5: follow-ups (nurture) ----
+    # Follow-ups are only sent during business hours in this time zone (rules: Settings page).
+    business_timezone: str = "Asia/Kolkata"
+    nurture_check_minutes: float = 10.0  # how often the worker looks for follow-ups that are due
+
     # ---- Week 3: Google Sheets mirror ----
     # "off", "csv" (writes data/leads_mirror.csv - opens in Excel), or "google"
     sheets_mode: Literal["off", "csv", "google"] = "csv"
@@ -168,6 +173,17 @@ class Settings(BaseSettings):
         if not v:
             return v
         return v if Path(v).is_absolute() else str((BACKEND_DIR / v).resolve())
+
+    @field_validator("business_timezone")
+    @classmethod
+    def _known_timezone(cls, v: str) -> str:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            ZoneInfo(v)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"unknown time zone {v!r} (example: Asia/Kolkata)") from exc
+        return v
 
     @field_validator("alert_channels", mode="before")
     @classmethod

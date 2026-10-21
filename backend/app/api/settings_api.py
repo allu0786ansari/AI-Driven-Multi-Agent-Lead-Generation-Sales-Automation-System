@@ -1,15 +1,18 @@
-"""Business settings: qualification rules and post/ad -> product links."""
+"""Business settings: qualification rules, post/ad -> product links, follow-ups."""
 
 from __future__ import annotations
 
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.auth.deps import CurrentUser
 from app.catalog.links import ContentLinks, get_links, save_links
+from app.db.models import Lead
 from app.db.session import get_db
+from app.nurture import config as nurture_config
 from app.qualify.config import QualificationConfig, get_config, save_config
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -47,3 +50,20 @@ def put_content_products(
         raise HTTPException(status_code=422, detail=f"Unknown SKU(s): {', '.join(unknown)}")
     db.commit()
     return links
+
+
+@router.get("/nurture", response_model=nurture_config.NurtureConfig)
+def get_nurture(user: CurrentUser, db: Annotated[Session, Depends(get_db)]) -> nurture_config.NurtureConfig:
+    """Follow-ups: on/off, the sequence of templates, the offer text, limit per lead, sending hours."""
+    return nurture_config.get_config(db, user.user_id)
+
+
+@router.put("/nurture", response_model=nurture_config.NurtureConfig)
+def put_nurture(
+    config: nurture_config.NurtureConfig, user: CurrentUser, db: Annotated[Session, Depends(get_db)]
+) -> nurture_config.NurtureConfig:
+    """Replace the follow-up rules. Every lead's next follow-up is recalculated on the next pass."""
+    nurture_config.save_config(db, user.user_id, config)
+    db.execute(update(Lead).where(Lead.user_id == user.user_id).values(nurture_next_at=None, nurture_step=0))
+    db.commit()
+    return config

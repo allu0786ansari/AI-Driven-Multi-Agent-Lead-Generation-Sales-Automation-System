@@ -32,7 +32,8 @@ const EMPTY: Record<View, { title: string; body: string }> = {
 function preview(lead: LeadSummary): string {
   const text = previewText(lead.last_message_text ?? lead.conversation_summary ?? "");
   if (lead.last_message_direction !== "outbound") return text;
-  const who = lead.last_message_sender === "salesperson" ? "You" : "Assistant";
+  const who =
+    lead.last_message_sender === "salesperson" ? "You" : lead.last_message_sender === "nurture" ? "Follow-up" : "Assistant";
   return `${who}: ${text}`;
 }
 

@@ -1,0 +1,30 @@
+# Optional: run Ollama in a container too.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.ollama.yml up -d --build
+#   docker compose -f docker-compose.yml -f docker-compose.ollama.yml exec ollama ollama pull llama3.1:8b
+#
+# Models are kept in the ollama-models volume. For an NVIDIA GPU, uncomment "deploy" below
+# (Docker Desktop with WSL2 and current NVIDIA drivers).
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  app:
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+    depends_on:
+      - ollama
+
+volumes:
+  ollama-models:

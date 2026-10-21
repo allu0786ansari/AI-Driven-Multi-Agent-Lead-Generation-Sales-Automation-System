@@ -16,6 +16,9 @@ backend/data/*.db
 backend/data/*.db-*
 backend/logs/
 backend/data/leads_mirror.csv
+backend/data/backups/
+# Docker: the lead mirror exported to your computer
+exports/
 # Evaluation reports (generated) and real customer messages (personal data)
 backend/data/eval/reports/
 backend/data/eval/*.real.jsonl

@@ -22,6 +22,16 @@ from app.router.dispatcher import registered_types
 router = APIRouter(prefix="/api", tags=["system"])
 
 
+def _last_backup() -> str | None:
+    from app.backup import BackupError, list_backups
+
+    try:
+        latest = next(iter(list_backups()), None)
+    except (BackupError, OSError):
+        return None
+    return latest.created_at.isoformat() if latest else None
+
+
 @router.get("/health")
 async def health(
     db: Annotated[Session, Depends(get_db)],
@@ -40,6 +50,7 @@ async def health(
         "database": "ok" if db_ok else "error",
         "llm_provider": settings.llm_provider,
         "handlers": registered_types(),
+        "last_backup": _last_backup(),
     }
     if deep:
         llm_ok = await run_in_threadpool(get_llm_client().health)

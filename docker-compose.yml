@@ -9,7 +9,12 @@ name: leadgen
 
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        # Official images by default; set these (e.g. in a .env next to this file) to use a mirror
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-slim}
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12-slim}
     image: leadgen-agent:local
     env_file: backend/.env
     environment:

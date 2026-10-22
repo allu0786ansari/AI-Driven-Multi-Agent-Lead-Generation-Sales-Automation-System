@@ -230,5 +230,8 @@ def sync_all(writer: SheetsWriter | None = None) -> int:
             try:
                 written += sync_user(s, user_id, writer)
             except ExternalAPIError as exc:
-                log.warning("sheets mirror failed; will retry", extra={"error": str(exc)[:300]})
+                # The reason is in the message too: plain-text logs do not show `extra` fields.
+                log.warning(
+                    "sheets mirror failed (%s); will retry", str(exc)[:300], extra={"error": str(exc)[:300]}
+                )
     return written

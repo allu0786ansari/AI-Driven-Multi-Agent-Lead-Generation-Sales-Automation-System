@@ -140,6 +140,10 @@ class Settings(BaseSettings):
     business_timezone: str = "Asia/Kolkata"
     nurture_check_minutes: float = 10.0  # how often the worker looks for follow-ups that are due
 
+    # ---- Week 6: backups ----
+    backup_dir: str = str(BACKEND_DIR / "data" / "backups")  # one SQLite backup a day
+    backup_keep: int = 14  # newest backups kept; 0 switches daily backups off
+
     # ---- Week 3: Google Sheets mirror ----
     # "off", "csv" (writes data/leads_mirror.csv - opens in Excel), or "google"
     sheets_mode: Literal["off", "csv", "google"] = "csv"
@@ -167,7 +171,9 @@ class Settings(BaseSettings):
                 return prefix + (BACKEND_DIR / path).resolve().as_posix()
         return v
 
-    @field_validator("catalog_path", "sheets_csv_path", "google_service_account_file", "frontend_dist")
+    @field_validator(
+        "catalog_path", "sheets_csv_path", "google_service_account_file", "frontend_dist", "backup_dir"
+    )
     @classmethod
     def _absolute_file_path(cls, v: str) -> str:
         if not v:

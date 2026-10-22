@@ -103,6 +103,32 @@ def first_account_and_catalog() -> None:
         _say(f"loaded the catalog from {path}: {result}")
 
 
+def check_writable() -> None:
+    """Warn early, with the fix, when a folder the server writes to is not writable.
+
+    Typical case: on a Linux host, Docker creates the ./exports bind mount owned by
+    root, while the server runs as user 10001 (Docker Desktop on Windows/macOS is fine).
+    """
+    s = get_settings()
+    folders = (
+        {"lead mirror (SHEETS_CSV_PATH)": Path(s.sheets_csv_path).parent} if s.sheets_mode == "csv" else {}
+    )
+    folders["backups (BACKUP_DIR)"] = Path(s.backup_dir)
+    for what, folder in folders.items():
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            probe = folder / ".write-test"
+            probe.write_text("ok")
+            probe.unlink()
+        except OSError:
+            uid = getattr(os, "getuid", lambda: 10001)()  # os.getuid does not exist on Windows
+            gid = getattr(os, "getgid", lambda: 10001)()
+            _say(
+                f"warning: cannot write to {folder} for the {what}. On a Linux host run once: "
+                f"sudo chown -R {uid}:{gid} <the folder mounted at {folder}>"
+            )
+
+
 def serve() -> None:
     port = os.getenv("PORT", "8000")
     args = [
@@ -120,6 +146,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     migrate()
     first_account_and_catalog()
+    check_writable()
     if argv[:1] == ["serve"]:
         serve()  # does not return
     return 0

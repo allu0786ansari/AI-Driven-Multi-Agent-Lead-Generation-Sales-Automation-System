@@ -16,6 +16,7 @@ from datetime import timedelta
 from sqlalchemy import or_, select, update
 
 from app.alerts.notify import deliver_notifications
+from app.backup import backup_if_due
 from app.config import get_settings
 from app.db.base import utcnow
 from app.db.enums import EventStatus
@@ -135,6 +136,7 @@ class Worker:
         self._sheets_disabled = False
         self._last_sheets_sync = 0.0
         self._last_nurture = float("-inf")
+        self._last_backup_check = float("-inf")
 
     def _sync_sheets_if_due(self) -> None:
         """Runs in a worker thread. Rewrites the lead mirror at most every SHEETS_SYNC_SECONDS."""
@@ -159,6 +161,13 @@ class Worker:
             return False
         self._last_nurture = time.monotonic()
         return bool(run_nurture().get("sent"))
+
+    def _backup_if_due(self) -> None:
+        """Runs in a worker thread. Checks hourly; makes the day's backup if there is none yet."""
+        if time.monotonic() - self._last_backup_check < 3600:
+            return
+        self._last_backup_check = time.monotonic()
+        backup_if_due()
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._run(), name="event-worker")
@@ -185,6 +194,7 @@ class Worker:
                 if await asyncio.to_thread(self._nurture_if_due):
                     await asyncio.to_thread(run_once)  # send the follow-ups just queued
                 await asyncio.to_thread(self._sync_sheets_if_due)
+                await asyncio.to_thread(self._backup_if_due)
             except Exception:  # noqa: BLE001 - keep the worker alive
                 log.exception("worker loop error")
             try:

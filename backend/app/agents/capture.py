@@ -221,6 +221,9 @@ def capture_lead_form(session: Session, user_id: str, lead_data: dict[str, Any])
                 timestamp=now,
             )
         )
+    from app.meta_feedback import queue_stage
+
+    queue_stage(session, lead, "lead")  # CRM stage 1 back to Meta (Week 6, when enabled)
     return CaptureResult(lead, created)
 
 

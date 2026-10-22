@@ -99,6 +99,9 @@ def backup_now(directory: Path | None = None, now: datetime | None = None) -> Ba
     try:
         with dst:
             src.backup(dst)  # consistent snapshot, even while the server writes
+        # The copy inherits WAL mode; make it one self-contained file (reading a WAL
+        # database leaves -wal/-shm files next to it, and a restore copies one file).
+        dst.execute("PRAGMA journal_mode=DELETE")
     finally:
         dst.close()
         src.close()
@@ -119,6 +122,9 @@ def prune(directory: Path | None = None, keep: int | None = None) -> int:
     old = list_backups(directory)[keep:]
     for b in old:
         b.path.unlink(missing_ok=True)
+    # Leftovers of an interrupted backup, or of 0.6.0 builds before this fix.
+    for stray in (directory or backup_dir()).glob(f"{PREFIX}*.partial*"):
+        stray.unlink(missing_ok=True)
     return len(old)
 
 

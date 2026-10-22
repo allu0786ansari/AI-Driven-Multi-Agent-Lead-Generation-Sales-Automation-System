@@ -119,6 +119,7 @@ class NotificationKind(StrEnum):
     HOT_LEAD = "hot_lead"
     HANDOFF = "handoff"  # the AI handed the conversation to a person
     CUSTOMER_REPLIED = "customer_replied"  # a lead under human takeover wrote again
+    MESSAGE_FAILED = "message_failed"  # a message to the customer could not be delivered (Week 6)
 
 
 class NotificationStatus(StrEnum):

@@ -24,6 +24,7 @@ from app.db.models import InboundEvent
 from app.db.session import session_scope
 from app.logging_config import trace_id_var
 from app.messaging.outbox import deliver_pending
+from app.meta_feedback import deliver_meta_events
 from app.nurture.agent import run_nurture
 from app.router.dispatcher import dispatch
 from app.sheets.mirror import get_writer, sync_all
@@ -113,7 +114,9 @@ def run_once() -> dict[str, int]:
     counts = process_pending()
     sent = deliver_pending()
     alerts = deliver_notifications()
+    feedback = deliver_meta_events()
     return {
+        **{f"meta_{k}": v for k, v in feedback.items() if k != "skipped"},
         **{f"event_{k}": v for k, v in counts.items()},
         **{f"message_{k}": v for k, v in sent.items()},
         **{f"alert_{k}": v for k, v in alerts.items() if k != "skipped"},

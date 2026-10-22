@@ -689,3 +689,183 @@ Each has a regression test.
    empty cell; "0 s" now reads "under 1 s".
 
 **Docs updated:** Spec Rev 7 Section 10.
+
+---
+
+## D-036 - 2026-10-22 - Week 6 - Docker packaging
+
+**Decision:** One image holds the API, the background worker and the
+built dashboard. It is built in two stages: Node builds the dashboard,
+then `python:3.12-slim` runs it from a virtual environment as the non-root
+user `leadgen` (uid 10001). Data lives in the `/data` volume: database,
+backups and search index. The start-up script (`scripts/bootstrap.py`)
+does the following:
+- refuses to start with the default or a short `JWT_SECRET` (exit code 2);
+- runs the migrations;
+- creates the first account from `INITIAL_USER_EMAIL` /
+  `INITIAL_USER_PASSWORD`;
+- loads the catalog once if the business has no products;
+- warns when a mounted folder is not writable (Linux bind mounts);
+- starts uvicorn.
+
+`docker-compose.yml` reads `backend/.env` and publishes port 8000 on
+127.0.0.1 only. ngrok on the host forwards to it. It reaches Ollama on the
+host through `host.docker.internal`. `docker-compose.ollama.yml` adds
+Ollama as a second container, with an optional GPU block. Base images can
+be swapped with the build arguments `NODE_IMAGE` / `PYTHON_IMAGE`, for
+registry mirrors.
+
+**Why:**
+- One command to install and update, the same on Windows and on a Linux
+  server.
+- Running without Docker still works unchanged; the image adds nothing
+  the code depends on.
+- A weak secret in a container that may be exposed is refused rather than
+  warned about.
+
+**Verified:** On every push, CI builds the image from the official base
+images and then:
+- checks that a weak secret is refused;
+- starts the container and waits for it to be healthy;
+- loads the demo and runs the 10 browser tests against the container;
+- restarts it and signs in again.
+
+The sandbox itself cannot pull from Docker Hub (blocked by policy). There,
+the same Dockerfile was built from stand-in base images and passed the
+same checks. Docker Desktop on Windows has not been run by the developer.
+
+**Docs updated:** Spec Rev 8 Sections 1, 11; proposal Rev 7 Section 5;
+docs/docker.md.
+
+---
+
+## D-037 - 2026-10-22 - Week 6 - Daily backups inside the server
+
+**Decision:** The worker checks every hour and makes one backup per day
+(business time zone). It uses SQLite's online backup API, which is safe
+while the server writes, and runs `PRAGMA integrity_check` on the copy. It
+keeps the newest `BACKUP_KEEP` (14) in `BACKUP_DIR`.
+`python -m scripts.backup` offers:
+- `now`: back up immediately;
+- `list`: show the backups;
+- `restore <file> --yes`: restore one. The server must be stopped first,
+  and the current database is kept as `*.before-restore-*`.
+
+`/api/health` and Settings -> System show the time of the last backup.
+
+**Why:** The spec asked for a daily backup with a tested restore. A
+separate scheduler or cron job would be one more thing to install on
+Windows.
+
+**Limits:**
+- Backups sit next to the database, so the business must copy them off the
+  machine.
+- Erasing a customer's personal data (D-032) cleans the live database.
+  Older backups keep it until they are pruned.
+
+Both are in docs/limitations_and_next_phase.md.
+
+**Docs updated:** Spec Rev 8 Sections 1, 3.2, 11; proposal Rev 7 notes.
+
+---
+
+## D-038 - 2026-10-22 - Week 6 - Lead stages back to Meta (Conversions API)
+
+**Decision:** Built the Phase 6 stretch goal. It is off unless
+`META_FEEDBACK_ENABLED=true`. The proposal named only the "Conversions API
+for CRM". Meta's lead ID exists only for lead-form leads, so
+Click-to-WhatsApp leads (the main WhatsApp entry point, proposal Section 7) use the "Conversions
+API for business messaging" instead.
+
+| Lead from | API flavour | Identifies the lead by | Events |
+|---|---|---|---|
+| Lead form | CRM: `action_source` `system_generated`, `custom_data.event_source` `crm` | `user_data.lead_id` (15-17 digits) | `Lead`, `Qualified` (hot), `Contacted`, `Bought`, `Lost` |
+| Click-to-WhatsApp ad | business messaging: `action_source` `business_messaging`, `messaging_channel` `whatsapp` | `user_data.ctwa_clid` + `whatsapp_business_account_id` | `QualifiedLead` (hot), `Purchase` (Bought) |
+
+How it works:
+- **Queueing:** events are written to `meta_events` in the same
+  transaction as the stage change. The worker sends them like the outbox,
+  retrying temporary errors up to 5 times.
+- **Once per stage:** each stage is sent at most once per lead (the
+  idempotency key).
+- **Purchase value:** a `Purchase` carries `currency` INR and `value` =
+  catalog price x the quantity the customer gave. When either is unknown
+  it is not sent, because a wrong value would teach Meta the wrong thing.
+- **Missing IDs:** messaging events are not queued without
+  `WHATSAPP_BUSINESS_ACCOUNT_ID`.
+- **Test mode:** with `META_API_MODE=fake` events are only recorded, with
+  status `logged`.
+- **Erasure:** erasing a lead cancels its queued events and empties every
+  payload.
+- **Visibility:** `GET /api/meta-events`, and a line in Settings -> System.
+
+Comment and DM leads have no Meta ad identifier and are not reported.
+
+**Why:** It closes the loop the proposal calls "the most direct link
+between the system and more sales per rupee of ad spend". Built off by
+default because it needs a dataset and stage names set up in Events
+Manager first (meta_setup.md section 10).
+
+**Not verified against Meta:** the field names follow Meta's current
+documentation, but no real dataset was available. The first live events
+should be checked in Events Manager -> Test events.
+
+**Docs updated:** Spec Rev 8 Sections 2, 3.2, 3.3, 4.11; proposal Rev 7
+Sections 3, 8; meta_setup.md section 10; .env.example.
+
+---
+
+## D-039 - 2026-10-22 - Week 6 - Fixes and additions from the failure drills and Docker
+
+Each has a test.
+1. **"Not delivered" alert.** A message that WhatsApp/Instagram refuses,
+   that Meta later reports as failed, or that was being sent when the
+   server died (outcome unknown, never re-sent) now alerts the salesperson
+   once, as a new alert kind `message_failed`. Before, it showed only on
+   the lead page, so a hot lead could wait unseen.
+2. **Google Sheets signing needed `cryptography`.** The first Week 6 CI run
+   failed in a fresh environment. In live use, the Sheets mirror would have
+   failed to sign its token, which the local environment had hidden. The
+   requirement is now `PyJWT[crypto]`, and the tests run in a fresh
+   environment before every release.
+3. **Lead mirror permission errors.** In Docker on Linux, the bind-mounted
+   `exports` folder belongs to root, so the CSV mirror could not write. It
+   now retries with the reason in the log, and the start-up script warns
+   with the `chown` fix (docs/docker.md).
+4. **Follow-up reason for closed leads.** The lead page showed "a person
+   has taken over" for a lead marked Bought or Lost. Now it shows "Marked
+   as Bought." / "Marked as Lost.".
+5. **Demo lead form ID.** The demo's lead-form lead had a 9-digit ID. Meta's
+   are 15-17 digits, so it could never show feedback to Meta. It now has
+   a 16-digit ID with the same name and number.
+6. **Backups left two extra files beside each copy.** The copy inherited
+   the database's WAL mode, so the integrity check left `-wal` / `-shm`
+   files next to it. Backups are now single self-contained files, and
+   pruning removes such leftovers.
+7. **Moving existing data into Docker** was not described. docs/docker.md
+   now has the steps; they were tested with a database made without Docker.
+
+**Docs updated:** Spec Rev 8 Sections 4.9, 11; docs/docker.md.
+
+---
+
+## D-040 - 2026-10-22 - Week 6 - Final model choice deferred to the business's own evaluation
+
+**Decision:** Week 6 does not pick the Ollama model. This sandbox cannot
+run Ollama, and the evaluation that decides it needs the business's PC
+(speed) and 50-100 of its real messages (accuracy, languages). The
+defaults stay:
+- `LLM_PROVIDER=fake` until Ollama is installed;
+- the built-in hashing search until `bge-m3` is measured with
+  `scripts/eval_retrieval.py`.
+
+When the report from `python -m scripts.evaluate` arrives, the model, the
+embedding model and any prompt changes are chosen from it and recorded
+here.
+
+**Why:** The Week 5 held-out results with keyword rules alone were below
+target (D-034). A model picked without the real messages and hardware
+would be a guess.
+
+**Docs updated:** Spec Rev 8 Section 5; proposal Rev 7 notes;
+docs/limitations_and_next_phase.md.

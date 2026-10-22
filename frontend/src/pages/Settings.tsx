@@ -444,11 +444,36 @@ function ContentLinks() {
   );
 }
 
-type Health = { status: string; version: string; llm_provider: string; database: string; llm?: string };
+type Health = {
+  status: string;
+  version: string;
+  llm_provider: string;
+  database: string;
+  llm?: string;
+  last_backup?: string | null;
+  meta_feedback?: "on" | "off";
+};
+type MetaEvents = { enabled: boolean; counts_by_status: Record<string, number> };
+
+const META_STATUS: Record<string, string> = {
+  sent: "sent",
+  logged: "recorded (test mode)",
+  queued: "waiting",
+  failed: "failed",
+  cancelled: "cancelled",
+};
 
 function System() {
   const health = useQuery({ queryKey: ["health"], queryFn: () => api<Health>("/api/health?deep=true") });
   const h = health.data;
+  const meta = useQuery({
+    queryKey: ["meta-events"],
+    queryFn: () => api<MetaEvents>("/api/meta-events?limit=1"),
+    enabled: h?.meta_feedback === "on",
+  });
+  const metaCounts = Object.entries(meta.data?.counts_by_status ?? {})
+    .map(([k, n]) => `${n} ${META_STATUS[k] ?? k}`)
+    .join(", ");
   return (
     <Block title="System" intro="How this installation is running. Change these in backend/.env and restart the server.">
       {h ? (
@@ -461,6 +486,13 @@ function System() {
           <dd>
             {h.llm_provider === "fake" ? "Test mode (replies built from the product list only)" : "Ollama"}
             {h.llm && h.llm !== "ok" && <span className="text-danger"> - {h.llm}</span>}
+          </dd>
+          <dt className="text-ink-3">Last backup</dt>
+          <dd>{h.last_backup ? dateTime(h.last_backup) : <span className="text-danger">None yet</span>}</dd>
+          <dt className="text-ink-3">Feedback to Meta</dt>
+          <dd>
+            {h.meta_feedback === "on" ? "On" : "Off"}
+            {h.meta_feedback === "on" && metaCounts && <span className="text-ink-3"> - {metaCounts}</span>}
           </dd>
         </dl>
       ) : (

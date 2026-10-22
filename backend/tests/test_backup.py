@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -145,3 +146,13 @@ def test_backup_names_sort_by_time() -> None:
         == "app-20260102-030405.db"
     )
     assert timedelta(hours=1)  # worker checks hourly (see Worker._backup_if_due)
+
+
+def test_a_backup_is_one_file_with_nothing_left_beside_it(user) -> None:  # noqa: ANN001
+    directory = backup.backup_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "app-20261020-100000.partial-wal").write_bytes(b"")  # from a 0.6.0 build
+    info = backup.backup_now()
+    assert sorted(p.name for p in directory.iterdir()) == [info.path.name]
+    with sqlite3.connect(info.path) as con:  # self-contained: not in WAL mode
+        assert con.execute("PRAGMA journal_mode").fetchone()[0] == "delete"

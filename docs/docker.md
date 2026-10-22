@@ -44,6 +44,33 @@ docker compose ps          # STATUS should say (healthy)
 docker compose logs app    # start-up messages start with [bootstrap]
 ```
 
+## Moving the data you already have into Docker
+
+If you ran Weeks 1-5 without Docker, your leads are in `backend\data\app.db`. The container
+starts with an empty database in its own volume. To bring your data along (tested in Week 6):
+
+1. Stop the server you started with `uvicorn` (Ctrl+C). Then, in the `backend` folder with the
+   venv active, make a clean copy:
+   ```powershell
+   python -m scripts.backup now        # prints: Backed up to ...\data\backups\app-20261022-103405.db
+   ```
+2. Leave `INITIAL_USER_EMAIL` / `INITIAL_USER_PASSWORD` out of `.env`; your existing account
+   comes with the data. From the project folder, start once so the volume exists, then stop:
+   ```powershell
+   docker compose up -d --build
+   docker compose stop app
+   ```
+3. Copy the backup in. Use the file name printed in step 1:
+   ```powershell
+   docker compose run --rm --no-deps --user root -v ./backend/data/backups:/old:ro --entrypoint sh app -c "cp /old/app-20261022-103405.db /data/app.db && rm -f /data/app.db-wal /data/app.db-shm && chown 10001:10001 /data/app.db"
+   docker compose start app
+   ```
+4. Sign in with your usual account. Data from an earlier week is upgraded to this week's version
+   on start; `docker compose logs app` then shows `[bootstrap] database is up to date`.
+
+From then on, always start the app with Docker. Running `uvicorn` as well would work on the old
+file, not on the one in the volume.
+
 ## Everyday commands
 
 | What | Command |

@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.db.enums import Direction, LeadStatus
 from app.db.models import Lead, Message, Product
+from app.meta_feedback import queue_stage
 from app.qualify.config import get_config
 from app.qualify.scoring import ScoreResult, next_question, score, summarize
 from app.qualify.slots import QualifySlots, extract_rules
@@ -132,6 +133,8 @@ def process_message(
     if old_status in AUTO_STATUSES:
         lead.status = result.status
     became_hot = lead.status == LeadStatus.HOT and old_status != LeadStatus.HOT
+    if became_hot:
+        queue_stage(session, lead, "qualified")  # tell Meta (Week 6, when enabled)
 
     question = next_question(slots, config)
     lead.qualify_slots = slots.model_dump(mode="json")

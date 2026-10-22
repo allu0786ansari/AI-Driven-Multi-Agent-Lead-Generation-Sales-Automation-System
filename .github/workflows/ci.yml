@@ -76,7 +76,7 @@ jobs:
           docker run -d --name app -p 127.0.0.1:8000:8000 -v app-data:/data \
             -e JWT_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')" \
             -e META_APP_SECRET -e META_VERIFY_TOKEN=ci-verify -e LLM_PROVIDER=fake \
-            -e BUSINESS_NAME="Sharma Kitchen Store" \
+            -e BUSINESS_NAME="Sharma Kitchen Store" -e META_FEEDBACK_ENABLED=true \
             -e INITIAL_USER_EMAIL=owner@store.test -e INITIAL_USER_PASSWORD=sandbox-pass-123 \
             leadgen-agent:ci
           for i in $(seq 1 30); do

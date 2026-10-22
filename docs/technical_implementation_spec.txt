@@ -1,8 +1,31 @@
 TECHNICAL IMPLEMENTATION SPECIFICATION
 AI-Driven Multi-Agent Lead Generation & Sales Automation System
 ==================================================================
-Revision 7 - 18 October 2026 (Week 5 build)
+Revision 8 - 22 October 2026 (Week 6 build)
 (Companion document to: project_proposal_ai_lead_gen_agent.txt)
+
+
+REVISION 8 NOTES (changes made during the Week 6 build - see
+docs/DECISIONS.md D-036 to D-040 for the reasons)
+----------------------------------------------------------------
+- Section 1: Docker packaging (one image: API + worker + built
+  dashboard; docker compose with a data volume; optional Ollama
+  container). Daily SQLite backups in the worker. PyJWT[crypto] (the
+  Google Sheets key signing needs the cryptography package).
+- Section 2: Meta feedback worker built (Conversions API for CRM for
+  lead-form leads, Conversions API for business messaging for
+  Click-to-WhatsApp leads), off by default.
+- Section 3.2: GET /api/meta-events; /api/health adds last_backup and
+  meta_feedback.
+- Section 3.3: meta_feedback.queue_stage / deliver_meta_events,
+  backup.backup_now / restore, notify_failed.
+- Section 4: new 4.11 meta_events; notifications.kind adds
+  message_failed.
+- Section 5: Week 6 done; lifecycle tests per entry path and failure
+  drills are part of the automated suite.
+- Section 11: a message Meta refuses (or whose outcome is unknown after a
+  crash) alerts the salesperson; backups implemented and restore tested;
+  the container runs as a non-root user and refuses a weak JWT secret.
 
 
 REVISION 7 NOTES (changes made during the Week 5 build - see
@@ -151,6 +174,16 @@ Alerts:                SMTP email and/or Telegram Bot API; ALERTS_MODE=log
 Local webhook tunnel:  ngrok with a static domain (free tier provides one)
 Hosting (prototype):   One always-on machine running backend + Ollama.
                        Do not use free tiers that sleep when idle.
+Packaging (Rev 8):     Docker image (multi-stage: dashboard built with
+                       Node, runtime python:3.12-slim, non-root user,
+                       /data volume, health check); docker compose with
+                       Ollama on the host or as an optional second
+                       container (D-036). Running without Docker still
+                       works the same way.
+Backups (Rev 8):       SQLite online backup once a day from the worker,
+                       integrity-checked, newest BACKUP_KEEP kept;
+                       scripts/backup.py to back up, list and restore
+                       (D-037)
 Auth:                  JWT-based auth (FastAPI, single-user to start)
 Secrets:               .env file / environment variables (never hardcoded,
                        never committed)
@@ -194,8 +227,12 @@ Logging:               Structured JSON logs with a per-lead trace ID;
   transaction, delivered by the worker via email / Telegram (Rev 5).
 - Sheets sync worker: rewrites the lead mirror (CSV or Google Sheet) at
   most every SHEETS_SYNC_SECONDS when something changed (Rev 5).
-- Meta feedback worker (stretch): sends lead stage changes to Conversions
-  API for CRM.
+- Meta feedback worker (Rev 8, D-038; off unless META_FEEDBACK_ENABLED):
+  lead stage changes are queued in meta_events in the same transaction
+  and sent by the worker. Lead-form leads: Conversions API for CRM
+  (lead_id; stages Lead, Qualified, Contacted, Bought, Lost).
+  Click-to-WhatsApp leads: Conversions API for business messaging
+  (ctwa_clid; QualifiedLead, Purchase with value from the catalog).
 - React frontend: salesperson dashboard (Rev 6): lead inbox (Needs you /
   Open / All / Closed), lead page (conversation across channels, score and
   why, take over / hand back, reply through the Send Gate, status,
@@ -272,7 +309,14 @@ Logging:               Structured JSON logs with a per-lead trace ID;
       - The logged-in business account
 
   GET  /api/health                       (no auth; ?deep=true checks LLM)
-      - Database status, LLM provider, registered event handlers
+      - Database status, LLM provider, registered event handlers,
+        last_backup (time of the newest backup), meta_feedback (on/off)
+        (Rev 8). Used by the Docker health check.
+
+  GET  /api/meta-events?limit=20         (Rev 8, D-038)
+      - Lead stages reported to Meta, newest first: kind (crm |
+        messaging), stage, event_name, status (queued | sent | logged |
+        failed | cancelled), attempts, error; counts by status; enabled.
 
   GET  /api/events                       (Rev 3)
       - Recent webhook events with status (pending / processed / ignored /
@@ -466,11 +510,16 @@ Logging:               Structured JSON logs with a per-lead trace ID;
       sender=..., context_products=...) -> SendResult
                                 # queued / needs_template / blocked + reason
   outbox.deliver_pending() -> counts   # sends queued messages (worker)
-  meta_feedback.report_stage(lead_id: str, stage: str) -> None  (stretch)
+  notify.notify_failed(session, message, lead)   # "Not delivered" alert (Rev 8)
+  meta_feedback.queue_stage(session, lead, stage) -> list[MetaEvent]
+      # stage: lead | qualified | contacted | bought | lost (Rev 8)
+  meta_feedback.deliver_meta_events() -> counts   # worker; fake = logged
+  backup.backup_now() / backup_if_due() / restore(path)   # scripts/backup.py (Rev 8)
 
   These boundaries are what allow splitting into separate services later
   without changing how other components call them. Only the outbox (fed
   exclusively by send_gate.queue_message) may call the WhatsApp or Meta send APIs.
+  The Conversions API (meta_feedback) sends no messages to customers.
 
 
 4. DATA SCHEMA
@@ -597,7 +646,7 @@ migration of existing rows.
 
 4.9 notifications (Rev 5, D-019)
   notification_id, user_id, lead_id, kind (hot_lead | handoff |
-  customer_replied), title, body, idempotency_key (unique), status
+  customer_replied | message_failed - Rev 8), title, body, idempotency_key (unique), status
   (queued | sent | logged | failed), channels_sent (JSON list), attempts,
   next_attempt_at, error, read_at (set when the salesperson opens the
   lead or the Alerts page - Rev 6), created_at, sent_at.
@@ -607,6 +656,14 @@ migration of existing rows.
   kind (status | assign | takeover | release | message), detail (JSON,
   e.g. {"from": "hot", "to": "converted"}), created_at. Shown in the
   conversation between messages; later input for analytics.
+
+4.11 meta_events (Rev 8, D-038)
+  event_id, user_id, lead_id, kind (crm | messaging), stage (lead |
+  qualified | contacted | bought | lost), event_name, payload (the
+  Conversions API event, JSON; emptied when the lead's data is erased),
+  idempotency_key (unique: one event per lead, kind and stage), status
+  (queued | sent | logged | failed | cancelled), attempts,
+  next_attempt_at, error, created_at, sent_at.
 
 4.7 product_embeddings (Rev 4, D-007)
   product_id (PK, deleted with the product), user_id, model (e.g.
@@ -686,13 +743,20 @@ Week 5 - Nurture, analytics, evaluation             (done, Rev 7)
   - Also built: one-time WhatsApp opt-in question, START, complaint
     handoff in DMs, hot-label feedback, follow-up settings page
 
-Week 6 - Buffer / stakeholder demo prep
+Week 6 - Buffer / stakeholder demo prep             (done, Rev 8)
   - End-to-end tests: one full lifecycle per entry path (CTWA, lead form,
-    comment), ad to converted/lost
+    comment), ad to converted/lost (tests/test_lifecycle.py)
   - Failure tests: duplicate webhooks, LLM down, send failure, expired
-    window, opted-out lead
-  - Live demo using test ad + test comment scenario
+    window, opted-out lead (tests/test_drills.py, plus the drills already
+    covered by earlier tests - RUNLOG Week 6)
+  - Live demo using test ad + test comment scenario (docs/demo_script.md)
   - Document known limitations, measured costs and next-phase plan
+    (docs/limitations_and_next_phase.md)
+  - Stretch: Meta feedback worker (D-038)
+  - Also built: Docker image and compose files, CI that tests the
+    container, daily backups with restore, "Not delivered" alert
+  - Final model choice: waiting for the stakeholder's evaluation report
+    on their own machine and messages (D-040)
 
 
 6. NOTES ON PRODUCTION MIGRATION (kept in sync with proposal Section 6)
@@ -944,7 +1008,14 @@ Instagram / Facebook
   new lead unanswered.
 - Secrets only in environment variables or a secret store; app secret and
   tokens never logged.
-- Daily database backup; tested restore.
+- Daily database backup; tested restore (Rev 8, D-037). Backups sit
+  next to the database: copy them off the machine. Erased personal data
+  remains in older backups until they are pruned (BACKUP_KEEP days).
+- A message Meta refuses, reports as failed later, or whose outcome is
+  unknown after a crash is never re-sent automatically; the salesperson
+  gets a "Not delivered" alert (Rev 8, D-039).
+- Docker: runs as a non-root user; refuses to start with the default or
+  a short JWT_SECRET; port published on 127.0.0.1 only (D-036).
 - Personal data masked in logs; Sheets mirror shared only with named
   salesperson accounts.
 - Data erasure endpoint (Section 3.2) and retention period agreed with the

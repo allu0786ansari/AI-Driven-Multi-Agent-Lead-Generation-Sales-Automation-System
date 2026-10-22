@@ -303,3 +303,34 @@ class LeadActivity(Base):
     kind: Mapped[str] = mapped_column(String(32))  # status | assign | takeover | release | message
     detail: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class MetaEvent(Base):
+    """A lead stage reported back to Meta (Conversions API), sent by the worker like the outbox (Week 6).
+
+    kind "crm": lead-form leads (lead_id); kind "messaging": Click-to-WhatsApp leads (ctwa_clid).
+    """
+
+    __tablename__ = "meta_events"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key"),
+        Index(None, "status", "next_attempt_at"),
+        Index(None, "lead_id"),
+    )
+
+    event_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.user_id"))
+    lead_id: Mapped[str] = mapped_column(ForeignKey("leads.lead_id"))
+    kind: Mapped[str] = mapped_column(String(16))  # crm | messaging
+    stage: Mapped[str] = mapped_column(String(32))  # lead | qualified | contacted | bought | lost
+    event_name: Mapped[str] = mapped_column(String(64))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    idempotency_key: Mapped[str] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(
+        String(16), default="queued"
+    )  # queued | sent | logged | failed | cancelled
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)

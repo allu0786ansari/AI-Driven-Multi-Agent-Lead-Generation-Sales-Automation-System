@@ -726,3 +726,152 @@ to Bought / Lost, failure drills (duplicate webhooks, model down, send failure, 
 opted-out customer), the live demo with a test ad and comment, the final model choice from your
 evaluation report, known limitations and the next-phase plan. Stretch: send Bought / Lost back
 to Meta (Conversions API).
+
+---
+
+## Week 6 - Docker, lifecycle tests, failure drills, feedback to Meta, demo (2026-10-22) - branch `week-6`
+
+### What was built
+
+| Area | Files | Notes |
+|---|---|---|
+| Docker | `Dockerfile`, `docker-compose.yml`, `docker-compose.ollama.yml`, `.dockerignore`, `scripts/bootstrap.py`, `docs/docker.md` | One image: server + worker + dashboard, non-root, data in a volume, health check. First start creates the account and loads the catalog. Refuses a weak `JWT_SECRET` (D-036) |
+| CI | `.github/workflows/ci.yml` | Every push: backend tests on Python 3.11 and 3.13, dashboard checks, then the Docker image is built, started, loaded with the demo, browser-tested and restarted |
+| Backups | `app/backup.py`, `scripts/backup.py` | One a day from the worker, integrity-checked, 14 kept; `now`, `list`, `restore`; shown in Settings -> System (D-037) |
+| Lifecycle tests | `tests/test_lifecycle.py` | One full run per entry path: Click-to-WhatsApp ad -> Bought, lead form -> Lost, Instagram comment -> Bought |
+| Failure drills | `tests/test_drills.py` | 10 drills (table below) |
+| "Not delivered" alert | `app/alerts/notify.py`, `app/messaging/outbox.py`, `app/handlers/whatsapp.py` | A refused or unconfirmed message alerts the salesperson once (D-039) |
+| Feedback to Meta (stretch) | `app/meta_feedback.py`, `alembic/versions/0006_*`, `GET /api/meta-events` | Lead stages to the Conversions API; off by default (D-038, meta_setup section 10) |
+| Docs | `docs/demo_script.md`, `docs/limitations_and_next_phase.md`, spec Rev 8, proposal Rev 7, DECISIONS D-036..D-040 | |
+
+### Failure drills
+
+| Drill | What must happen | Test |
+|---|---|---|
+| Meta sends the same webhook 3 times | One lead, one reply | `test_drills` (+ `test_flows`, `test_webhooks` duplicates) |
+| Model (Ollama) down | Customer still gets the right price from the catalog; nobody paged | `test_drills` (+ `test_flows` LLM down / no product -> person) |
+| WhatsApp API hiccup (503) | Retried, sent once, no alert | `test_drills` (+ `test_send_gate` retries) |
+| WhatsApp refuses a message | Marked failed, salesperson alerted once | `test_drills` |
+| Meta reports "failed" later (twice) | One alert | `test_drills` (+ `test_flows` billing correction) |
+| Server killed while sending | Never re-sent (customer may have it), salesperson alerted | `test_drills` |
+| Server killed while handling an event | Picked up again, answered once | `test_drills` (+ `test_worker` stale event) |
+| Handler crashes after queueing a reply | No second reply | `test_flows` |
+| 24-hour window closed | Free text refused; approved template allowed with opt-in | `test_drills` (+ `test_send_gate`) |
+| Customer opted out | No templates; only the confirmation | `test_drills` (+ `test_consent_nurture`) |
+| Forged webhook | 401, nothing stored | `test_drills` (+ `test_webhooks`) |
+| Lead mirror file locked / folder not writable | Retried, server keeps going, start-up warning | `test_alerts_sheets`, `test_bootstrap` |
+| Database lost | Restore from a backup, safety copy kept | `test_backup` |
+
+### Test results (sandbox, before publishing)
+
+- `pytest`: **424 passed** on Python 3.13.16 and 3.11.17, in fresh environments (381 from Weeks 1-5 + 43 new).
+  - New: test_backup 12, test_meta_feedback 11, test_drills 10, test_bootstrap 7, test_lifecycle 3.
+  - Mutation checks: each of these, removed on its own, makes a test fail:
+    - the "Not delivered" alert;
+    - the once-per-stage rule for Meta events;
+    - cancelling Meta events on erasure;
+    - skipping a purchase with an unknown value;
+    - the single-file backup.
+- `ruff check` / `ruff format --check`: clean.
+- Dashboard: typecheck clean, **35 unit tests passed**, production build 391 kB JavaScript (120 kB gzipped).
+- **Docker, on GitHub** (official base images, run 39760964093): image built; refused the default secret;
+  healthy; demo loaded; **10 browser tests passed** against the container; data kept after a restart.
+- **Docker, in the sandbox** (stand-in base images; Docker Hub is blocked here):
+  - Same checks, plus feedback to Meta switched on.
+  - Healthy 6 s after start, about 72 MB memory.
+  - 10 browser tests passed.
+  - Settings -> System shows the last backup and "Feedback to Meta: On - 2 recorded (test mode)".
+  - `docker compose` start/stop, backup and restore all worked.
+  - The Ollama overlay validates.
+  - **Moving a non-Docker database into the volume** (docs/docker.md) worked: same account, all leads.
+- **Measured figures** (demo, test mode): first reply 0.7 s median and 1.1 s at the 95th
+  percentile; messaging estimate ₹1.97 for 16 messages. Details in docs/limitations_and_next_phase.md.
+- **Found and fixed** (D-039):
+  1. A refused message was visible only on the lead page; now it raises an alert.
+  2. The Google Sheets mirror needed `cryptography`. It was missing in fresh installs; the first Week 6 CI run caught it.
+  3. The CSV mirror could not write to a root-owned folder in Docker on Linux.
+  4. Closed leads showed the wrong follow-up reason.
+  5. The demo's lead form ID was too short for feedback to Meta.
+  6. Each backup left two extra files beside it.
+
+### Run it on Windows
+
+**Option A - Docker (recommended from now on)**
+
+1. Install **Docker Desktop** (docker.com -> Docker Desktop for Windows; accept WSL 2). Start it
+   and wait until it says "Engine running".
+2. Get Week 6 (after merging the PR, or `git checkout week-6`):
+   ```powershell
+   git checkout main
+   git pull
+   ```
+3. Settings - copy the `# ---- Week 6 ----` block from `backend\.env.example` to the end of
+   `backend\.env`, and set a long `JWT_SECRET`:
+   ```powershell
+   python -c "import secrets; print(secrets.token_urlsafe(48))"
+   ```
+4. **Keep your data:** follow docs/docker.md, "Moving the data you already have into Docker"
+   (4 commands). For a fresh start instead, set `INITIAL_USER_EMAIL` / `INITIAL_USER_PASSWORD`
+   in `.env` and run `docker compose up -d --build`.
+5. Check:
+   ```powershell
+   docker compose ps                    # (healthy)
+   docker compose exec app python -m scripts.backup list
+   ```
+   Open http://127.0.0.1:8000 -> Settings -> System: version 0.6.0-week6, Last backup today.
+6. Ollama on your PC keeps working: the container reaches it at `host.docker.internal`.
+   ngrok stays as before (`ngrok http --url=<your-domain> 8000`).
+
+**Option B - without Docker (as in Weeks 1-5)**
+```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements-dev.txt     # PyJWT[crypto] for the Google Sheets mirror
+python -m alembic upgrade head          # Running upgrade 0005 -> 0006
+python -m pytest                        # 424 passed
+cd ..\frontend
+npm ci
+npm test                                # 35 passed
+npm run build
+cd ..\backend
+python -m uvicorn app.main:app --reload
+```
+
+**Try the Week 6 additions** (with Docker, put `docker compose exec app` in front of each
+`python -m ...`; without Docker, run them in the `backend` folder):
+- Rehearse the demo: docs/demo_script.md, part A (15 minutes, all simulated).
+- The drills: `python -m pytest tests/test_drills.py tests/test_lifecycle.py -v` (without Docker).
+- "Not delivered" alert: whenever WhatsApp or Instagram refuses a message (for example a template
+  that is not approved yet), the Alerts page shows "Not delivered" with Meta's reason.
+- Backups: `python -m scripts.backup now`, then `python -m scripts.backup list`.
+- Feedback to Meta, in test mode: set `META_FEEDBACK_ENABLED=true` and restart. Run
+  `python -m scripts.simulate demo`, mark the form lead Bought, then check Settings -> System.
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| Container stops at once; log says `JWT_SECRET` | Set a long random `JWT_SECRET` in `backend\.env` (step 3) |
+| `docker compose up` fails pulling `node` / `python` | Docker Desktop not running, or a company proxy: see docs/docker.md "Behind a company proxy" |
+| Sign-in fails after moving to Docker | The data was not copied in (empty volume). Redo docs/docker.md "Moving the data...", or create an account with `docker compose exec app python -m scripts.create_user` |
+| Replies are the plain catalog list in Docker | Ollama not reachable from the container: is Ollama running on the PC? `docker compose exec app python -m scripts.llm_smoke` |
+| Settings -> System: "Last backup: None yet" | Wait a minute after start, or run `scripts.backup now`; check `BACKUP_KEEP` is not 0 |
+| Feedback to Meta shows "failed" | `GET /api/meta-events` (try it at http://127.0.0.1:8000/docs) shows Meta's reason; usually `META_DATASET_ID`, the token, or the stage names in Events Manager |
+
+### Your actions this week
+- Install Docker Desktop and move to Docker (Option A); tell me if any step differs on your PC.
+- Rehearse the demo (part A), then try part B with the Lead Ads Testing Tool and a test post.
+- **Send the evaluation report** (`python -m scripts.evaluate`, with Ollama and ideally your own
+  messages). It decides the model (D-040).
+- When the templates are approved and you are ready for live traffic: meta_setup section 10
+  (dataset and stage names), then `META_FEEDBACK_ENABLED=true`.
+- Copy `data\backups` (or the Docker volume, docs/docker.md) off the PC regularly.
+
+### Next
+The six-week plan is complete. The next phase, in order, is in
+docs/limitations_and_next_phase.md:
+1. Go live in a controlled way.
+2. Choose the model from your report.
+3. Measure against the baseline for 4 weeks.
+4. Move to an always-on server with HTTPS.
+5. Postgres, a separate worker and several businesses, when volume needs it.

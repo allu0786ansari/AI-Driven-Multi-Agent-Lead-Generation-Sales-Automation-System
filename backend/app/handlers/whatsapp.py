@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.capture import capture_whatsapp_message
 from app.agents.engage import respond_to_whatsapp
+from app.alerts.notify import notify_failed
 from app.db.enums import DELIVERY_RANK, DeliveryStatus, EventStatus, EventType, PricingCategory
 from app.db.models import InboundEvent, Lead, Message
 from app.db.tenancy import resolve_user_id
@@ -45,6 +46,7 @@ def on_whatsapp_status(session: Session, event: InboundEvent) -> HandlerResult:
         err = errors[0]
         msg.delivery_status = DeliveryStatus.FAILED
         msg.error = f"{err.get('code')}: {err.get('title') or err.get('message') or 'failed'}"
+        notify_failed(session, msg, session.get(Lead, msg.lead_id))
     elif new in DELIVERY_RANK and DELIVERY_RANK[DeliveryStatus(new)] > DELIVERY_RANK.get(
         msg.delivery_status, -1
     ):

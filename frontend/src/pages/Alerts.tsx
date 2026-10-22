@@ -9,6 +9,7 @@ const KIND: Record<Notification["kind"], { label: string; color: string }> = {
   hot_lead: { label: "Hot lead", color: "var(--hot)" },
   handoff: { label: "Needs a person", color: "var(--warm)" },
   customer_replied: { label: "Customer replied", color: "var(--ink-2)" },
+  message_failed: { label: "Not delivered", color: "var(--danger)" },
 };
 
 const DELIVERY: Record<string, string> = {

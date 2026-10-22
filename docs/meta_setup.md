@@ -211,3 +211,39 @@ For real alerts set `ALERTS_MODE=live` and configure one or both:
    service account's email (ends with `iam.gserviceaccount.com`) as **Editor**.
 4. Copy the sheet ID from its URL (`docs.google.com/spreadsheets/d/<ID>/edit`)
    into `GOOGLE_SHEET_ID`, set `SHEETS_MODE=google`, restart the server.
+
+## 10. Feedback to Meta - which leads bought (Week 6, optional)
+
+When this is on, the server tells Meta how each ad lead turned out, so Meta can
+show your ads to more people like the ones who bought (Conversions API). It is
+off by default and nothing is sent until you turn it on.
+
+**What is sent** (nothing else - no names, phone numbers or messages):
+
+| Lead came from | When | Event sent | Identifies the lead by |
+|---|---|---|---|
+| Lead form | lead arrives / Hot / Contacted / Bought / Lost | `Lead` / `Qualified` / `Contacted` / `Bought` / `Lost` | Meta's lead ID |
+| Click-to-WhatsApp ad | lead becomes Hot | `QualifiedLead` | the ad click ID (`ctwa_clid`) |
+| Click-to-WhatsApp ad | marked Bought | `Purchase` with the order value in ₹ | the ad click ID |
+
+Leads from comments and ordinary DMs have no Meta ad ID, so nothing is sent for them.
+`Purchase` needs a price: the product the customer asked for x the quantity they gave
+(from your product list). If either is unknown, the purchase is not reported.
+
+**Set it up (about 15 minutes):**
+
+1. Events Manager -> **Connect data sources** -> **Web**/**CRM** -> create a dataset
+   (or use your existing Pixel). Copy its **Dataset ID** into `META_DATASET_ID`.
+2. In the dataset's **Settings** -> **Conversions API** -> **Generate access token**.
+   Put it in `META_CAPI_ACCESS_TOKEN`.
+3. Lead forms only: in the dataset, **Set up CRM integration** -> choose "Conversions API" ->
+   when asked for your CRM stages, enter exactly: `Lead`, `Qualified`, `Contacted`,
+   `Bought`, `Lost`. Use the same name as `META_FEEDBACK_SOURCE_NAME` (default `Lead desk`)
+   for the CRM name.
+4. Click-to-WhatsApp: in the dataset, connect your **WhatsApp Business Account**
+   (Settings -> Linked assets). `WHATSAPP_BUSINESS_ACCOUNT_ID` must be set in `.env`.
+5. Set `META_FEEDBACK_ENABLED=true` and restart. Settings -> System shows
+   "Feedback to Meta: On" and how many events were sent.
+6. Check: Events Manager -> your dataset -> **Test events** / **Overview**. Events show up
+   within about 20 minutes. A `failed` count in Settings means Meta refused them - the
+   reason is in `GET /api/meta-events` (open `/docs` in the browser to try it).

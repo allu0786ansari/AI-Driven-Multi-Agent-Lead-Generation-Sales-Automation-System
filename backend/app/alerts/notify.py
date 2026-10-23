@@ -18,7 +18,7 @@ from app.alerts.senders import AlertSendError, get_alert_senders
 from app.config import get_settings
 from app.db.base import utcnow
 from app.db.enums import NotificationKind, NotificationStatus
-from app.db.models import Lead, Notification
+from app.db.models import Lead, Message, Notification
 from app.db.session import session_scope
 from app.qualify.agent import current_slots
 from app.qualify.scoring import summarize
@@ -30,7 +30,34 @@ TITLES = {
     NotificationKind.HOT_LEAD: "🔥 Hot lead: {who}",
     NotificationKind.HANDOFF: "🙋 Needs a person: {who}",
     NotificationKind.CUSTOMER_REPLIED: "💬 {who} replied (you are handling this lead)",
+    NotificationKind.MESSAGE_FAILED: "⚠️ Message not delivered: {who}",
 }
+
+_FAILED_WHAT = {
+    "template": "WhatsApp template",
+    "private_reply": "private reply to their comment",
+    "text": "message",
+}
+
+
+def notify_failed(session: Session, message: Message, lead: Lead) -> Notification | None:
+    """Tell the salesperson a message did not reach the customer (spec 3.1/3.2, Week 6).
+
+    Raised once per message, whatever reported the failure (the API call, a
+    send that never finished, or Meta's status webhook). Not for public replies
+    under comments, nor for leads whose data was erased.
+    """
+    kind = (message.payload or {}).get("type") or "text"
+    if kind == "public_reply" or lead.erased_at is not None:
+        return None
+    what = _FAILED_WHAT.get(kind, "message")
+    if message.template_name:
+        what = f'WhatsApp template "{message.template_name}"'
+    reason = (
+        f"The {what} could not be delivered: {message.error or 'no reason given'}. "
+        "Check the conversation before sending it again."
+    )
+    return notify(session, lead, NotificationKind.MESSAGE_FAILED, reason, f"failed:{message.message_id}")
 
 
 def _who(lead: Lead) -> str:

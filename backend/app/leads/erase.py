@@ -26,6 +26,7 @@ from app.db.base import utcnow
 from app.db.enums import DeliveryStatus
 from app.db.models import InboundEvent, Lead, Message, Notification
 from app.leads.service import record
+from app.meta_feedback import cancel_for_lead
 
 ERASED = "[erased]"
 _KEEP_SLOTS = ("product", "category", "quantity", "timeline", "purchase_intent")
@@ -103,6 +104,7 @@ def erase_personal_data(session: Session, lead: Lead, actor: str) -> EraseResult
     lead.is_human_takeover = False
     lead.nurture_next_at = None
     lead.erased_at = utcnow()
+    cancel_for_lead(session, lead.lead_id)  # queued Meta feedback carries the lead's IDs
     record(session, lead, actor, "erase", messages=len(messages), events=events)
     session.flush()
     return EraseResult(len(messages), events, alerts, cancelled)

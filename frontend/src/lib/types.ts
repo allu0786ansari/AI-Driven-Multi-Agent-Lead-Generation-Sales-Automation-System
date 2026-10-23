@@ -114,7 +114,7 @@ export type Counts = Record<View | LeadStatus | "takeover", number>;
 export interface Notification {
   notification_id: string;
   lead_id: string | null;
-  kind: "hot_lead" | "handoff" | "customer_replied";
+  kind: "hot_lead" | "handoff" | "customer_replied" | "message_failed";
   title: string;
   body: string;
   status: string;

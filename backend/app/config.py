@@ -140,6 +140,17 @@ class Settings(BaseSettings):
     business_timezone: str = "Asia/Kolkata"
     nurture_check_minutes: float = 10.0  # how often the worker looks for follow-ups that are due
 
+    # ---- Week 6: lead stages back to Meta (Conversions API) ----
+    # Off by default. With META_API_MODE=fake the events are only recorded (status "logged").
+    meta_feedback_enabled: bool = False
+    meta_dataset_id: str = ""  # Events Manager dataset (pixel) ID that receives the events
+    meta_capi_access_token: str = ""  # empty = META_PAGE_ACCESS_TOKEN
+    meta_feedback_source_name: str = "Lead desk"  # "lead_event_source" shown to Meta for CRM events
+
+    # ---- Week 6: backups ----
+    backup_dir: str = str(BACKEND_DIR / "data" / "backups")  # one SQLite backup a day
+    backup_keep: int = 14  # newest backups kept; 0 switches daily backups off
+
     # ---- Week 3: Google Sheets mirror ----
     # "off", "csv" (writes data/leads_mirror.csv - opens in Excel), or "google"
     sheets_mode: Literal["off", "csv", "google"] = "csv"
@@ -167,7 +178,9 @@ class Settings(BaseSettings):
                 return prefix + (BACKEND_DIR / path).resolve().as_posix()
         return v
 
-    @field_validator("catalog_path", "sheets_csv_path", "google_service_account_file", "frontend_dist")
+    @field_validator(
+        "catalog_path", "sheets_csv_path", "google_service_account_file", "frontend_dist", "backup_dir"
+    )
     @classmethod
     def _absolute_file_path(cls, v: str) -> str:
         if not v:

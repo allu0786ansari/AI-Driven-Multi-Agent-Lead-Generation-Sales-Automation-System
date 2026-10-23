@@ -1,8 +1,33 @@
 PROJECT PROPOSAL
 AI-Driven Multi-Agent Lead Generation & Sales Automation System
 ==================================================================
-Revision 6 - 18 October 2026 (updated during the Week 5 build)
+Revision 7 - 22 October 2026 (updated during the Week 6 build)
 (Companion document: technical_implementation_spec.txt)
+
+
+REVISION 7 NOTES (see docs/DECISIONS.md for the reasons)
+---------------------------------------------------------
+- The system now installs as a Docker container: one command starts the
+  server, dashboard and background work, with the data kept in a volume.
+  Ollama can stay on the PC or run as a second container (D-036).
+- The server backs up its database every day and keeps two weeks of
+  backups; a backup can be restored with one command. Backups are on the
+  same machine and must be copied elsewhere (D-037).
+- The ad feedback loop (Phase 6) is built and off by default. Lead-form
+  leads report every stage to Meta (Conversions API for CRM). Leads from
+  Click-to-WhatsApp ads report "qualified" and "purchase", the purchase
+  with its value (Conversions API for business messaging). Comment and DM
+  leads cannot be reported: Meta gives no ad identifier for them (D-038).
+- When WhatsApp or Instagram refuses a message, the salesperson gets a
+  "Not delivered" alert instead of the failure showing only on the lead
+  page (D-039).
+- Each entry path (Click-to-WhatsApp ad, lead form, comment) is tested end
+  to end through to Bought or Lost, and the failure drills (duplicate
+  webhooks, model down, refused message, server crash, closed window,
+  opted-out customer, forged webhook) run automatically on every change.
+- The model choice waits for the evaluation on the business's own PC and
+  messages (D-040). Known limitations, measured figures and the
+  next-phase plan: docs/limitations_and_next_phase.md.
 
 
 REVISION 6 NOTES (see docs/DECISIONS.md for the reasons)
@@ -258,9 +283,11 @@ Data Layer
      of the lead table so the salesperson can browse leads in a familiar
      tool. Column design still maps directly onto future CRM fields.
 
-Feedback Loop to Meta (stretch)
+Feedback Loop to Meta (stretch; built in Week 6, off by default - Rev 7)
    - When a lead becomes qualified or converted, that stage is sent to Meta
-     via the Conversions API for CRM, keyed on the Meta lead ID. Meta can
+     via the Conversions API for CRM, keyed on the Meta lead ID. Leads from
+     Click-to-WhatsApp ads use the Conversions API for business messaging,
+     keyed on the ad click ID, with the purchase value. Meta can
      then optimize lead ads for "conversion leads" (people likely to buy)
      instead of raw form fills. This is the most direct link between the
      system and more sales per rupee of ad spend.
@@ -322,6 +349,9 @@ Hosting (prototype):       One always-on machine running both the backend
                            idle: a sleeping server can take about a minute
                            to wake, which breaks the 1-minute response goal
                            and causes Meta webhook retries.
+Packaging (Rev 7):         Docker image + docker compose (works on Docker
+                           Desktop for Windows and on a Linux server);
+                           daily database backups built in
 
 
 6. MIGRATION PATH TO INDUSTRIAL DEPLOYMENT
@@ -427,10 +457,16 @@ Phase 5: Nurture sequence                            (built, Week 5)
   - Analytics page (leads, funnel, speed, follow-ups, costs) and the
     evaluation script for the quality targets
 
-Phase 6 (stretch): Ad feedback loop
+Phase 6 (stretch): Ad feedback loop                (built, Week 6)
   - Send qualified/converted stages to Meta via Conversions API for CRM
+    (and for business messaging, for Click-to-WhatsApp leads)
   - Pull Meta Ads performance data to show which ads produce qualified
-    leads and at what messaging + ad cost
+    leads and at what messaging + ad cost (not built; next phase)
+
+Week 6 (built): demo preparation
+  - End-to-end tests for each entry path, failure drills, Docker
+    packaging, daily backups, demo script (docs/demo_script.md), known
+    limitations and next-phase plan (docs/limitations_and_next_phase.md)
 
 
 9. SUCCESS CRITERIA FOR PROTOTYPE
@@ -458,6 +494,14 @@ with keyword rules only, before the model is chosen, on synthetic messages:
 comment actions 75% and product answers 92.9%, with no wrong prices.
 Both are below target, so the model choice matters. The decisive run uses
 the chosen Ollama model on 50-100 of the business's real messages.
+
+Week 6 (Rev 7): the technical criteria above are checked by automated
+tests on every change: one full lifecycle per entry path, no duplicate
+messages from repeated webhooks, no wrong prices, a recorded opt-in for
+every template, a follow-up that re-engages a test lead. First response
+in the demo: 0.7 s median, 1.1 s at the 95th percentile (test mode,
+without a model; the model adds its own time - measure it with the
+evaluation report).
 
 Business (measured against the Phase 0 baseline):
 - Median time to first response

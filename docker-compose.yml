@@ -1,0 +1,40 @@
+# Lead desk in Docker. Configuration comes from backend/.env (same file as without Docker);
+# the values below adapt it to the container. Guide: docs/docker.md
+#
+#   docker compose up -d --build     start (http://127.0.0.1:8000)
+#   docker compose logs -f app       watch the logs
+#   docker compose down              stop (data is kept in the leadgen-data volume)
+
+name: leadgen
+
+services:
+  app:
+    build:
+      context: .
+      args:
+        # Official images by default; set these (e.g. in a .env next to this file) to use a mirror
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-slim}
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12-slim}
+    image: leadgen-agent:local
+    env_file: backend/.env
+    environment:
+      APP_ENV: production
+      DATABASE_URL: sqlite:////data/app.db
+      BACKUP_DIR: /data/backups
+      FRONTEND_DIST: /app/frontend/dist
+      # The lead mirror CSV lands in ./exports on your computer (opens in Excel)
+      SHEETS_CSV_PATH: /exports/leads_mirror.csv
+      # Ollama running on your computer (not in a container); see docker-compose.ollama.yml otherwise
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - leadgen-data:/data
+      - ./exports:/exports
+      - ./backend/secrets:/app/backend/secrets:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  leadgen-data:

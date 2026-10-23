@@ -92,12 +92,17 @@ class CsvWriter:
         self.path = Path(path)
 
     def write(self, rows: list[list[str]], previous_row_count: int) -> None:  # noqa: ARG002
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=self.path.parent, suffix=".tmp")
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=self.path.parent, suffix=".tmp")
+        except PermissionError as exc:
+            # e.g. a Docker bind mount owned by another user (Week 6)
+            raise ExternalAPIError(f"no permission to write in {self.path.parent}", transient=True) from exc
         try:
             # utf-8-sig so Excel shows ₹ and non-English names correctly
             with os.fdopen(fd, "w", newline="", encoding="utf-8-sig") as fh:
                 csv.writer(fh).writerows(rows)
+            os.chmod(tmp, 0o644)  # readable from outside a container / by other programs
             os.replace(tmp, self.path)
         except PermissionError as exc:
             Path(tmp).unlink(missing_ok=True)
@@ -225,5 +230,8 @@ def sync_all(writer: SheetsWriter | None = None) -> int:
             try:
                 written += sync_user(s, user_id, writer)
             except ExternalAPIError as exc:
-                log.warning("sheets mirror failed; will retry", extra={"error": str(exc)[:300]})
+                # The reason is in the message too: plain-text logs do not show `extra` fields.
+                log.warning(
+                    "sheets mirror failed (%s); will retry", str(exc)[:300], extra={"error": str(exc)[:300]}
+                )
     return written

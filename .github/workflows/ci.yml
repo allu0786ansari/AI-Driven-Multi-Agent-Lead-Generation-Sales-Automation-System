@@ -1,0 +1,125 @@
+# Checks every push and pull request:
+#   backend   - lint + all tests on Python 3.11 and 3.13
+#   dashboard - typecheck, unit tests, production build
+#   docker    - builds the real image (official python/node bases), starts it like a user would,
+#               loads the demo conversations and runs the browser tests against the container
+name: CI
+
+on:
+  push:
+    branches: [main, "week-*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.13"]
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: python -m pytest
+
+  dashboard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  docker:
+    needs: [backend, dashboard]
+    runs-on: ubuntu-latest
+    env:
+      META_APP_SECRET: ci-meta-secret
+      E2E_META_APP_SECRET: ci-meta-secret
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t leadgen-agent:ci .
+      - name: Refuses to start with the default secret
+        run: |
+          set +e
+          docker run --rm leadgen-agent:ci
+          test $? -eq 2
+      - name: Start the container
+        run: |
+          docker run -d --name app -p 127.0.0.1:8000:8000 -v app-data:/data \
+            -e JWT_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')" \
+            -e META_APP_SECRET -e META_VERIFY_TOKEN=ci-verify -e LLM_PROVIDER=fake \
+            -e BUSINESS_NAME="Sharma Kitchen Store" -e META_FEEDBACK_ENABLED=true \
+            -e INITIAL_USER_EMAIL=owner@store.test -e INITIAL_USER_PASSWORD=sandbox-pass-123 \
+            leadgen-agent:ci
+          for i in $(seq 1 30); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' app)
+            echo "health: $status"
+            [ "$status" = healthy ] && break
+            sleep 3
+          done
+          test "$status" = healthy
+          curl -fsS http://127.0.0.1:8000/api/health
+          curl -fsS http://127.0.0.1:8000/ | grep -q "<title>Lead desk</title>"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Load the demo conversations
+        working-directory: backend
+        run: |
+          pip install -r requirements.txt
+          python -m scripts.simulate demo --url http://127.0.0.1:8000
+          sleep 3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Browser tests against the container
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npm run e2e
+      - name: Restart keeps the data
+        run: |
+          docker restart app
+          sleep 8
+          curl -fsS -X POST http://127.0.0.1:8000/api/auth/login \
+            -d "username=owner@store.test&password=sandbox-pass-123" | grep -q access_token
+      - name: Container logs
+        if: always()
+        run: docker logs app 2>&1 | tail -200
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: frontend/e2e/screenshots
+          if-no-files-found: ignore

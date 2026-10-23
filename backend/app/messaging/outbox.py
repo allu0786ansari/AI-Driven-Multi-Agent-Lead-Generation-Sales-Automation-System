@@ -21,6 +21,7 @@ from datetime import timedelta
 
 from sqlalchemy import select, update
 
+from app.alerts.notify import notify_failed
 from app.config import get_settings
 from app.db.base import utcnow
 from app.db.enums import Channel, DeliveryStatus, Direction
@@ -61,16 +62,29 @@ def _claim(limit: int) -> list[str]:
 
 def _fail_stuck() -> int:
     cutoff = utcnow() - STUCK_SENDING_AFTER
+    failed = 0
     with session_scope() as s:
-        res = s.execute(
-            update(Message)
-            .where(Message.delivery_status == DeliveryStatus.SENDING, Message.next_attempt_at <= cutoff)
-            .values(
-                delivery_status=DeliveryStatus.FAILED,
-                error="Delivery outcome unknown: server stopped during sending. Check before resending.",
+        stuck = s.scalars(
+            select(Message).where(
+                Message.delivery_status == DeliveryStatus.SENDING, Message.next_attempt_at <= cutoff
             )
-        )
-        return res.rowcount or 0
+        ).all()
+        for msg in stuck:
+            res = s.execute(  # conditional, in case another worker got there first
+                update(Message)
+                .where(
+                    Message.message_id == msg.message_id, Message.delivery_status == DeliveryStatus.SENDING
+                )
+                .values(
+                    delivery_status=DeliveryStatus.FAILED,
+                    error="Delivery outcome unknown: server stopped during sending. Check before resending.",
+                )
+            )
+            if res.rowcount:
+                s.refresh(msg)
+                notify_failed(s, msg, s.get(Lead, msg.lead_id))
+                failed += 1
+    return failed
 
 
 def _dispatch(msg: Message, lead: Lead) -> tuple[str, str | None]:
@@ -124,11 +138,13 @@ def _send_one(message_id: str) -> str:
                 )
             else:
                 msg.delivery_status = DeliveryStatus.FAILED
+                notify_failed(s, msg, lead)
             log.warning("message send failed", extra={"status": msg.delivery_status, "code": exc.code})
             return msg.delivery_status
         except Exception as exc:  # noqa: BLE001 - unexpected bug: fail visibly, never resend blindly
             msg.delivery_status = DeliveryStatus.FAILED
             msg.error = f"{type(exc).__name__}: {exc}"[:2000]
+            notify_failed(s, msg, lead)
             log.exception("message send crashed")
             return msg.delivery_status
         msg.platform_message_id = platform_id

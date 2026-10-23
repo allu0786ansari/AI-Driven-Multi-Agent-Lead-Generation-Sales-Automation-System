@@ -66,6 +66,7 @@ def db_url(tmp_path: Path, template_db: Path) -> Iterator[str]:
     url = f"sqlite:///{path.as_posix()}"
     get_settings.cache_clear()
     os.environ["DATABASE_URL"] = url
+    os.environ["BACKUP_DIR"] = str(tmp_path / "backups")
     init_engine(url)
     yield url
     get_settings.cache_clear()

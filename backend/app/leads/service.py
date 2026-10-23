@@ -45,6 +45,16 @@ def set_status(session: Session, lead: Lead, status: LeadStatus, actor: str) -> 
     lead.status = status
     if status in CLOSED_STATUSES:
         lead.nurture_next_at = None  # Week 5: no follow-ups for closed leads
+    stage = {
+        LeadStatus.CONVERTED: "bought",
+        LeadStatus.LOST: "lost",
+        LeadStatus.CONTACTED: "contacted",
+        LeadStatus.HOT: "qualified",
+    }.get(LeadStatus(status))
+    if stage:
+        from app.meta_feedback import queue_stage
+
+        queue_stage(session, lead, stage)  # Week 6: lead stages back to Meta (when enabled)
 
 
 def assign(session: Session, lead: Lead, assigned_to: str | None, actor: str) -> None:

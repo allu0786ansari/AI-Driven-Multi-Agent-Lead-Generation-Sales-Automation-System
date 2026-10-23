@@ -14,12 +14,22 @@ from sqlalchemy.orm import Session
 from app import __version__
 from app.auth.deps import CurrentUser
 from app.config import get_settings
-from app.db.models import InboundEvent
+from app.db.models import InboundEvent, MetaEvent
 from app.db.session import get_db
 from app.llm.factory import get_llm_client
 from app.router.dispatcher import registered_types
 
 router = APIRouter(prefix="/api", tags=["system"])
+
+
+def _last_backup() -> str | None:
+    from app.backup import BackupError, list_backups
+
+    try:
+        latest = next(iter(list_backups()), None)
+    except (BackupError, OSError):
+        return None
+    return latest.created_at.isoformat() if latest else None
 
 
 @router.get("/health")
@@ -40,6 +50,8 @@ async def health(
         "database": "ok" if db_ok else "error",
         "llm_provider": settings.llm_provider,
         "handlers": registered_types(),
+        "last_backup": _last_backup(),
+        "meta_feedback": "on" if settings.meta_feedback_enabled else "off",
     }
     if deep:
         llm_ok = await run_in_threadpool(get_llm_client().health)
@@ -88,4 +100,50 @@ def list_events(
     return EventsResponse(
         counts_by_status=counts,
         events=[EventOut.model_validate(r, from_attributes=True) for r in rows],
+    )
+
+
+class MetaEventOut(BaseModel):
+    event_id: str
+    lead_id: str
+    kind: str  # crm | messaging
+    stage: str
+    event_name: str
+    status: str  # queued | sent | logged | failed | cancelled
+    attempts: int
+    error: str | None
+    created_at: datetime
+    sent_at: datetime | None
+
+
+class MetaEventsResponse(BaseModel):
+    enabled: bool
+    counts_by_status: dict[str, int]
+    events: list[MetaEventOut]
+
+
+@router.get("/meta-events", response_model=MetaEventsResponse)
+def list_meta_events(
+    user: CurrentUser,
+    db: Annotated[Session, Depends(get_db)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 20,
+) -> MetaEventsResponse:
+    """Lead stages reported back to Meta (Conversions API), newest first (Week 6)."""
+    rows = db.scalars(
+        select(MetaEvent)
+        .where(MetaEvent.user_id == user.user_id)
+        .order_by(MetaEvent.created_at.desc())
+        .limit(limit)
+    ).all()
+    counts = dict(
+        db.execute(
+            select(MetaEvent.status, func.count())
+            .where(MetaEvent.user_id == user.user_id)
+            .group_by(MetaEvent.status)
+        ).all()
+    )
+    return MetaEventsResponse(
+        enabled=get_settings().meta_feedback_enabled,
+        counts_by_status=counts,
+        events=[MetaEventOut.model_validate(r, from_attributes=True) for r in rows],
     )

@@ -95,6 +95,8 @@ def ineligible_reason(lead: Lead, config: NurtureConfig) -> str:
         return "Follow-ups are switched off in Settings."
     if lead.erased_at is not None:
         return "Personal data erased."
+    if lead.status in (LeadStatus.CONVERTED, LeadStatus.LOST):  # the final word, whatever else applies
+        return f"Marked as {'Bought' if lead.status == LeadStatus.CONVERTED else 'Lost'}."
     if not lead.contact_phone:
         return "No WhatsApp number."
     if lead.opted_out:
